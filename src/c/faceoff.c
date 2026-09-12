@@ -1,4 +1,5 @@
 #include "settings.h"
+#include "weather.h"
 #include <pebble-fctx/fctx.h>
 #include <pebble-fctx/ffont.h>
 #include <pebble.h>
@@ -9,6 +10,7 @@
 
 static Window *s_window;
 static FFont *s_font;
+static FFont *s_weather_font;
 static Layer *s_time_layer;
 static Layer *s_background_layer;
 
@@ -75,6 +77,12 @@ static int32_t prv_f_time_font_offset(GRect bounds) {
   return prv_f_time_font_height(bounds) / 6;
 }
 
+// Icons carry less detail than a glyph of the same height, so they are set a
+// little larger than the text they sit under.
+static int32_t prv_f_weather_icon_height(GRect bounds) {
+  return prv_f_date_font_height(bounds) * 4 / 3;
+}
+
 static int32_t prv_f_date_line_height(GRect bounds) {
   return prv_f_date_font_height(bounds) * 4 / 3;
 }
@@ -118,13 +126,14 @@ static FPoint prv_f_slant_point(GRect bounds, int32_t f_radius,
 }
 
 static void prv_f_draw_text(FContext *fctx, FPoint f_center, const char *text,
-                            GColor color, GTextAlignment alignment) {
+                            FFont *font, GColor color,
+                            GTextAlignment alignment) {
   fctx_set_rotation(fctx, TEXT_ANGLE);
 
   fctx_begin_fill(fctx);
   fctx_set_offset(fctx, f_center);
   fctx_set_fill_color(fctx, color);
-  fctx_draw_string(fctx, text, s_font, alignment, FTextAnchorCapMiddle);
+  fctx_draw_string(fctx, text, font, alignment, FTextAnchorCapMiddle);
   fctx_end_fill(fctx);
 }
 
@@ -151,48 +160,104 @@ static void prv_draw_time(Layer *layer, GContext *ctx, tm *time) {
   strftime(s_min_buffer, sizeof(s_min_buffer), "%M", time);
 
   prv_f_draw_text(&fctx, f_hour_center, s_hour_buffer,
-                  prv_ink_color(true, g_settings.hour_color),
+                  s_font, prv_ink_color(true, g_settings.hour_color),
                   GTextAlignmentCenter);
   prv_f_draw_text(&fctx, f_min_center, s_min_buffer,
-                  prv_ink_color(false, g_settings.minute_color),
+                  s_font, prv_ink_color(false, g_settings.minute_color),
                   GTextAlignmentCenter);
 
   fctx_deinit_context(&fctx);
 }
 
-static void prv_draw_date(Layer *layer, GContext *ctx, tm *time) {
+// How far the side columns sit off the centre: clear of the time digits, which
+// are the widest thing they have to stay out of the way of.
+static int32_t prv_f_side_column_offset(FContext *fctx, GRect bounds) {
+  fctx_set_text_cap_height(fctx, s_font,
+                           FIXED_TO_INT(prv_f_time_font_height(bounds)));
+  int32_t f_time_half_width = fctx_string_width(fctx, "00", s_font) / 2;
+
+  return f_time_half_width + prv_f_date_font_gap(bounds) -
+         prv_f_time_font_offset(bounds);
+}
+
+// A column holds up to two lines. They read downwards on both halves of the
+// face, so line 0 is the one further from the centre up top and the one nearer
+// it below; either way it is the upper of the pair. A single-line complication
+// uses line 1, which keeps it tucked against the centre where the weekday used
+// to sit.
+#define COMPLICATION_LINES 2
+
+static FPoint prv_f_complication_point(GRect bounds, int32_t f_offset, bool top,
+                                       int line) {
+  int32_t f_radius = prv_f_date_font_radius(bounds) +
+                     (top ? COMPLICATION_LINES - 1 - line : line) *
+                         prv_f_date_line_height(bounds);
+
+  return prv_f_slant_point(bounds, top ? f_radius : -f_radius,
+                           top ? f_offset : -f_offset);
+}
+
+static void prv_draw_complication(Layer *layer, GContext *ctx, tm *time,
+                                  bool top) {
+  Complication complication =
+      top ? g_settings.top_complication : g_settings.bottom_complication;
+  if (complication == COMPLICATION_NONE) {
+    return;
+  }
+
   FContext fctx;
   GRect bounds = layer_get_unobstructed_bounds(layer);
   fctx_init_context(&fctx, ctx);
 
-  static char s_mday_buffer[3];
-  strftime(s_mday_buffer, sizeof(s_mday_buffer), "%d", time);
+  int32_t f_offset = prv_f_side_column_offset(&fctx, bounds);
+  GColor color = prv_ink_color(
+      top, top ? g_settings.wday_color : g_settings.mday_color);
+  GTextAlignment alignment = top ? GTextAlignmentLeft : GTextAlignmentRight;
+  int32_t f_text_height = prv_f_date_font_height(bounds);
 
-  fctx_set_text_cap_height(&fctx, s_font,
-                           FIXED_TO_INT(prv_f_time_font_height(bounds)));
-  int32_t f_time_half_width = fctx_string_width(&fctx, "00", s_font) / 2;
+  static char s_upper_buffer[8];
+  static char s_lower_buffer[8];
+  const char *upper = NULL;
+  const char *lower = NULL;
+  bool lower_is_icon = false;
 
-  fctx_set_text_cap_height(&fctx, s_font,
-                           FIXED_TO_INT(prv_f_date_font_height(bounds)));
+  switch (complication) {
+  case COMPLICATION_WEATHER:
+    weather_temperature_string(s_upper_buffer, sizeof(s_upper_buffer));
+    upper = s_upper_buffer;
+    lower = weather_icon();
+    lower_is_icon = true;
+    break;
+  case COMPLICATION_DATE:
+    strftime(s_lower_buffer, sizeof(s_lower_buffer), "%d", time);
+    upper = s_months[time->tm_mon];
+    lower = s_lower_buffer;
+    break;
+  case COMPLICATION_WEEKDAY:
+    lower = s_wdays[time->tm_wday];
+    break;
+  case COMPLICATION_NONE:
+    break;
+  }
 
-  int32_t f_radius = prv_f_date_font_radius(bounds);
-  int32_t f_offset = f_time_half_width + prv_f_date_font_gap(bounds) -
-                     prv_f_time_font_offset(bounds);
+  fctx_set_text_cap_height(&fctx, s_font, FIXED_TO_INT(f_text_height));
+  if (upper) {
+    prv_f_draw_text(&fctx, prv_f_complication_point(bounds, f_offset, top, 0),
+                    upper, s_font, color, alignment);
+  }
 
-  FPoint f_wday_center = prv_f_slant_point(bounds, f_radius, f_offset);
-  FPoint f_month_center = prv_f_slant_point(bounds, -f_radius, -f_offset);
-  FPoint f_mday_center = prv_f_slant_point(
-      bounds, -f_radius - prv_f_date_line_height(bounds), -f_offset);
-
-  prv_f_draw_text(&fctx, f_wday_center, s_wdays[time->tm_wday],
-                  prv_ink_color(true, g_settings.wday_color),
-                  GTextAlignmentLeft);
-  prv_f_draw_text(&fctx, f_month_center, s_months[time->tm_mon],
-                  prv_ink_color(false, g_settings.mday_color),
-                  GTextAlignmentRight);
-  prv_f_draw_text(&fctx, f_mday_center, s_mday_buffer,
-                  prv_ink_color(false, g_settings.mday_color),
-                  GTextAlignmentRight);
+  if (lower) {
+    FPoint f_point = prv_f_complication_point(bounds, f_offset, top, 1);
+    if (lower_is_icon) {
+      if (s_weather_font) {
+        fctx_set_text_cap_height(
+            &fctx, s_weather_font, FIXED_TO_INT(prv_f_weather_icon_height(bounds)));
+        prv_f_draw_text(&fctx, f_point, lower, s_weather_font, color, alignment);
+      }
+    } else {
+      prv_f_draw_text(&fctx, f_point, lower, s_font, color, alignment);
+    }
+  }
 
   fctx_deinit_context(&fctx);
 }
@@ -295,12 +360,14 @@ static void prv_draw_time_layer(Layer *layer, GContext *ctx) {
   struct tm *time = localtime(&now);
 
   prv_draw_time(layer, ctx, time);
-  if (g_settings.show_date) {
-    prv_draw_date(layer, ctx, time);
-  }
+  prv_draw_complication(layer, ctx, time, true);
+  prv_draw_complication(layer, ctx, time, false);
 }
 
 static void prv_tick_handler(tm *_tick_time, TimeUnits _units_changed) {
+  if (settings_want_weather()) {
+    weather_refresh_if_due();
+  }
   layer_mark_dirty(s_time_layer);
 }
 
@@ -319,6 +386,21 @@ static void prv_window_unload(Window *window) {
   layer_destroy(s_time_layer);
   layer_destroy(s_background_layer);
   ffont_destroy(s_font);
+  if (s_weather_font) {
+    ffont_destroy(s_weather_font);
+  }
+}
+
+// The icon font is a third of aplite's free heap, so it is only resident while
+// a complication is actually drawing icons out of it.
+static void prv_sync_weather_font() {
+  bool wanted = settings_want_weather();
+  if (wanted && !s_weather_font) {
+    s_weather_font = ffont_create_from_resource(RESOURCE_ID_WEATHERFONT);
+  } else if (!wanted && s_weather_font) {
+    ffont_destroy(s_weather_font);
+    s_weather_font = NULL;
+  }
 }
 
 static void prv_save_settings() {
@@ -334,10 +416,21 @@ static void prv_load_settings() {
 
 static void prv_inbox_received_callback(DictionaryIterator *iterator,
                                         void *context) {
+  bool weather_dirty = weather_update(iterator);
 
-  bool dirty = update_settings(iterator, context);
-  if (dirty) {
+  bool wanted_weather = settings_want_weather();
+  bool settings_dirty = update_settings(iterator, context);
+  if (settings_dirty) {
     prv_save_settings();
+    prv_sync_weather_font();
+    // Turning a weather complication on should not leave it blank until the
+    // next refresh comes round.
+    if (!wanted_weather && settings_want_weather()) {
+      weather_refresh();
+    }
+  }
+
+  if (settings_dirty || weather_dirty) {
     prv_invalidate_layers();
   }
 }
@@ -357,10 +450,11 @@ static void prv_unobstructed_did_change_callback(void *context) {
 
 static void prv_init(void) {
   prv_load_settings();
+  weather_init();
 
   app_message_register_inbox_received(prv_inbox_received_callback);
 
-  app_message_open(256, 0);
+  app_message_open(256, 64);
 
   s_window = window_create();
   window_set_window_handlers(s_window, (WindowHandlers){
@@ -369,6 +463,7 @@ static void prv_init(void) {
                                        });
 
   s_font = ffont_create_from_resource(RESOURCE_ID_TIMEFONT);
+  prv_sync_weather_font();
 
   Layer *window_layer = window_get_root_layer(s_window);
   GRect bounds = layer_get_bounds(window_layer);
@@ -389,6 +484,10 @@ static void prv_init(void) {
   unobstructed_area_service_subscribe(handlers, NULL);
 
   tick_timer_service_subscribe(MINUTE_UNIT, prv_tick_handler);
+
+  if (settings_want_weather()) {
+    weather_refresh();
+  }
 
   const bool animated = true;
   window_stack_push(s_window, animated);

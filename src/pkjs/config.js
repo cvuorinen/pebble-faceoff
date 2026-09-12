@@ -117,27 +117,98 @@ module.exports = [
 		"items": [
 			{
 				"type": "heading",
-				"defaultValue": "Date Style"
+				"defaultValue": "Complications"
 			},
 			{
-				"type": "toggle",
-				"messageKey": "SHOW_DATE",
-				"label": "Show Date",
-				"defaultValue": true
+				"type": "text",
+				"defaultValue": "The two corners beside the time. Weather needs a location fix from your phone."
 			},
+				{
+					"type": "radiogroup",
+					"messageKey": "TOP_COMPLICATION",
+					"label": "Top Right",
+					"defaultValue": "1",
+					"options": [
+						{
+							"label": "Nothing",
+							"value": "0"
+						},
+						{
+							"label": "Weather",
+							"value": "1"
+						},
+						{
+							"label": "Day of week",
+							"value": "2"
+						},
+						{
+							"label": "Date",
+							"value": "3"
+						}
+					]
+				},
+				{
+					"type": "radiogroup",
+					"messageKey": "BOTTOM_COMPLICATION",
+					"label": "Bottom Left",
+					"defaultValue": "3",
+					"options": [
+						{
+							"label": "Nothing",
+							"value": "0"
+						},
+						{
+							"label": "Weather",
+							"value": "1"
+						},
+						{
+							"label": "Day of week",
+							"value": "2"
+						},
+						{
+							"label": "Date",
+							"value": "3"
+						}
+					]
+				},
 			{
 				"type": "color",
 				"capabilities": ["COLOR"],
 				"messageKey": "WDAY_COLOR",
-				"label": "Day of Week Color",
+				"label": "Top Right Color",
 				"defaultValue": "0xFFFFFF"
 			},
 			{
 				"type": "color",
 				"capabilities": ["COLOR"],
 				"messageKey": "MDAY_COLOR",
-				"label": "Day of Month Color",
+				"label": "Bottom Left Color",
 				"defaultValue": "0xFFFFFF"
+			}
+		]
+	},
+	{
+		"type": "section",
+		"items": [
+			{
+				"type": "heading",
+				"defaultValue": "Weather"
+			},
+			{
+				"type": "radiogroup",
+				"messageKey": "TEMPERATURE_UNIT",
+				"label": "Temperature unit",
+				"defaultValue": "0",
+				"options": [
+					{
+						"label": "Celsius",
+						"value": "0"
+					},
+					{
+						"label": "Fahrenheit",
+						"value": "1"
+					}
+				]
 			}
 		]
 	},

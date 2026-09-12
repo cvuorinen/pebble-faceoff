@@ -35,10 +35,15 @@
       "HOUR_COLOR",
       "MINUTE_COLOR",
       "TIME_FORMAT",
-      "SHOW_DATE",
       "WDAY_COLOR",
       "MDAY_COLOR",
-      "BW_STRIPE_STYLE"
+      "BW_STRIPE_STYLE",
+      "TOP_COMPLICATION",
+      "BOTTOM_COMPLICATION",
+      "TEMPERATURE_UNIT",
+      "WEATHER_REQUEST",
+      "WEATHER_TEMPERATURE",
+      "WEATHER_CONDITION"
     ],
     "resources": {
       "media": [
@@ -46,6 +51,11 @@
           "type": "raw",
           "name": "TIMEFONT",
           "file": "BebasNeue-Regular.ffont"
+        },
+        {
+          "type": "raw",
+          "name": "WEATHERFONT",
+          "file": "WeatherIcons.ffont"
         },
         {
           "type": "bitmap",

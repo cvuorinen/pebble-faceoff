@@ -1,0 +1,15 @@
+# Weather Icons to compile into resources/WeatherIcons.ffont.
+# One upstream class name per line; see fonts/weathericons.css for the full set.
+# Order decides which ASCII character each icon gets, so src/c/weather_icons.h
+# is regenerated whenever this changes -- rebuild both together.
+
+wi-day-sunny
+wi-night-clear
+wi-day-cloudy
+wi-night-alt-cloudy
+wi-cloud
+wi-rain
+wi-snow
+wi-fog
+wi-thunderstorm
+wi-na

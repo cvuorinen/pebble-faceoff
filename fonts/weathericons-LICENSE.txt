@@ -1,0 +1,14 @@
+Weather Icons
+https://github.com/erikflowers/weather-icons
+
+Created by Erik Flowers and Lukas Bischoff.
+
+The icon font (weathericons-regular-webfont.svg, and anything derived from it,
+including resources/WeatherIcons.ffont in this repository) is licensed under
+the SIL Open Font License 1.1:
+
+    http://scripts.sil.org/OFL
+
+The accompanying CSS (weathericons.css) is licensed under the MIT License:
+
+    http://opensource.org/licenses/mit-license.html

@@ -3,9 +3,24 @@
 #include "message_keys.auto.h"
 #include "pebble.h"
 
+#define SETTINGS_KEY_V5 5
 #define SETTINGS_KEY_V4 4
 #define SETTINGS_KEY_V3 3
 #define SETTINGS_KEY_V2 2
+
+typedef struct SettingsV5 {
+  GColor top_stripe_color;
+  GColor bottom_stripe_color;
+  GColor background_color;
+  bool fill_corners;
+  GColor hour_color;
+  GColor minute_color;
+  TimeFormat time_format;
+  bool show_date;
+  GColor wday_color;
+  GColor mday_color;
+  BWStripeStyle bw_stripe_style;
+} SettingsV5;
 
 typedef struct SettingsV4 {
   GColor top_stripe_color;
@@ -55,10 +70,17 @@ void default_settings() {
   g_settings.hour_color = GColorWhite;
   g_settings.minute_color = GColorWhite;
   g_settings.time_format = TIME_FORMAT_SYSTEM;
-  g_settings.show_date = true;
   g_settings.wday_color = GColorWhite;
   g_settings.mday_color = GColorWhite;
   g_settings.bw_stripe_style = BW_STRIPES_DARK_TOP;
+  g_settings.top_complication = COMPLICATION_WEATHER;
+  g_settings.bottom_complication = COMPLICATION_DATE;
+  g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
+}
+
+bool settings_want_weather() {
+  return g_settings.top_complication == COMPLICATION_WEATHER ||
+         g_settings.bottom_complication == COMPLICATION_WEATHER;
 }
 
 bool update_settings(DictionaryIterator *iterator, void *context) {
@@ -115,9 +137,28 @@ bool update_settings(DictionaryIterator *iterator, void *context) {
     dirty = true;
   }
 
-  Tuple *show_date_tuple = dict_find(iterator, MESSAGE_KEY_SHOW_DATE);
-  if (show_date_tuple) {
-    g_settings.show_date = show_date_tuple->value->int32 == 1;
+  Tuple *top_complication_tuple =
+      dict_find(iterator, MESSAGE_KEY_TOP_COMPLICATION);
+  if (top_complication_tuple) {
+    // atoi returns 0 on error but that's fine because "0" is our default.
+    g_settings.top_complication =
+        (Complication)atoi(top_complication_tuple->value->cstring);
+    dirty = true;
+  }
+
+  Tuple *bottom_complication_tuple =
+      dict_find(iterator, MESSAGE_KEY_BOTTOM_COMPLICATION);
+  if (bottom_complication_tuple) {
+    g_settings.bottom_complication =
+        (Complication)atoi(bottom_complication_tuple->value->cstring);
+    dirty = true;
+  }
+
+  Tuple *temperature_unit_tuple =
+      dict_find(iterator, MESSAGE_KEY_TEMPERATURE_UNIT);
+  if (temperature_unit_tuple) {
+    g_settings.temperature_unit =
+        (TemperatureUnit)atoi(temperature_unit_tuple->value->cstring);
     dirty = true;
   }
 
@@ -153,10 +194,35 @@ static void prv_from_v4_settings(SettingsV4 v4) {
   g_settings.hour_color = v4.hour_color;
   g_settings.minute_color = v4.minute_color;
   g_settings.time_format = v4.time_format;
-  g_settings.show_date = v4.show_date;
   g_settings.wday_color = v4.wday_color;
   g_settings.mday_color = v4.mday_color;
   g_settings.bw_stripe_style = BW_STRIPES_DARK_TOP;
+  g_settings.top_complication =
+      v4.show_date ? COMPLICATION_WEEKDAY : COMPLICATION_NONE;
+  g_settings.bottom_complication =
+      v4.show_date ? COMPLICATION_DATE : COMPLICATION_NONE;
+  g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
+}
+
+// Everything before v6 had a weekday in the top column and a show_date toggle
+// for the bottom one. The nearest thing now is a weekday complication up top
+// and the date below, kept or cleared as show_date had it.
+static void prv_from_v5_settings(SettingsV5 v5) {
+  g_settings.top_stripe_color = v5.top_stripe_color;
+  g_settings.bottom_stripe_color = v5.bottom_stripe_color;
+  g_settings.background_color = v5.background_color;
+  g_settings.fill_corners = v5.fill_corners;
+  g_settings.hour_color = v5.hour_color;
+  g_settings.minute_color = v5.minute_color;
+  g_settings.time_format = v5.time_format;
+  g_settings.wday_color = v5.wday_color;
+  g_settings.mday_color = v5.mday_color;
+  g_settings.bw_stripe_style = v5.bw_stripe_style;
+  g_settings.top_complication =
+      v5.show_date ? COMPLICATION_WEEKDAY : COMPLICATION_NONE;
+  g_settings.bottom_complication =
+      v5.show_date ? COMPLICATION_DATE : COMPLICATION_NONE;
+  g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
 }
 
 static void prv_from_v2_settings(SettingsV2 v2) {
@@ -167,10 +233,14 @@ static void prv_from_v2_settings(SettingsV2 v2) {
   g_settings.hour_color = v2.hour_color;
   g_settings.minute_color = v2.minute_color;
   g_settings.time_format = TIME_FORMAT_SYSTEM;
-  g_settings.show_date = v2.show_date;
   g_settings.wday_color = v2.wday_color;
   g_settings.mday_color = v2.mday_color;
   g_settings.bw_stripe_style = BW_STRIPES_DARK_TOP;
+  g_settings.top_complication =
+      v2.show_date ? COMPLICATION_WEEKDAY : COMPLICATION_NONE;
+  g_settings.bottom_complication =
+      v2.show_date ? COMPLICATION_DATE : COMPLICATION_NONE;
+  g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
 }
 
 static void prv_from_v3_settings(SettingsV3 v3) {
@@ -182,13 +252,29 @@ static void prv_from_v3_settings(SettingsV3 v3) {
   g_settings.minute_color = v3.minute_color;
   g_settings.time_format =
       v3.show_24h_time ? TIME_FORMAT_24H : TIME_FORMAT_SYSTEM;
-  g_settings.show_date = v3.show_date;
   g_settings.wday_color = v3.wday_color;
   g_settings.mday_color = v3.mday_color;
   g_settings.bw_stripe_style = BW_STRIPES_DARK_TOP;
+  g_settings.top_complication =
+      v3.show_date ? COMPLICATION_WEEKDAY : COMPLICATION_NONE;
+  g_settings.bottom_complication =
+      v3.show_date ? COMPLICATION_DATE : COMPLICATION_NONE;
+  g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
 }
 
 bool migrate_settings() {
+  SettingsV5 settings_v5;
+  if (persist_read_data(SETTINGS_KEY_V5, &settings_v5, sizeof(settings_v5)) !=
+      E_DOES_NOT_EXIST) {
+    prv_from_v5_settings(settings_v5);
+    persist_write_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
+    persist_delete(SETTINGS_KEY_V5);
+    persist_delete(SETTINGS_KEY_V4);
+    persist_delete(SETTINGS_KEY_V3);
+    persist_delete(SETTINGS_KEY_V2);
+    return true;
+  }
+
   SettingsV4 settings_v4;
   if (persist_read_data(SETTINGS_KEY_V4, &settings_v4, sizeof(settings_v4)) !=
       E_DOES_NOT_EXIST) {
