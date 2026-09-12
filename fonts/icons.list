@@ -1,0 +1,23 @@
+# The icons compiled into resources/Icons.ffont.
+#
+# A bare name is a Weather Icons class; see fonts/weathericons.css for the set.
+# A "material:" prefix names a file under fonts/material-symbols, fetched one at
+# a time from the Material Symbols "outlined" variant.
+#
+# Order decides which character each icon gets, so src/c/icons.h is regenerated
+# whenever this changes -- rebuild both together.
+
+wi-day-sunny
+wi-night-clear
+wi-day-cloudy
+wi-night-alt-cloudy
+wi-cloud
+wi-rain
+wi-snow
+wi-fog
+wi-thunderstorm
+wi-na
+
+# Health complications.
+material:steps
+material:favorite

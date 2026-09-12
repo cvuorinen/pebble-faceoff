@@ -14,9 +14,11 @@ install_deps:
 	
 compile_font: install_deps
 	# Compile our font for all digits, the uppercase letters used by the day and
-	# month abbreviations, and the minus and degree ring the temperature needs
-	npx --no-install fctx-compiler fonts/BebasNeue-Regular.svg -r '[0-9:A-Z\u00b0-]'
+	# month abbreviations, the minus and degree ring the temperature needs, and
+	# the point in an abbreviated step count. A character missing from this set
+	# is skipped silently at draw time, so "8.2K" would come out as "82K".
+	npx --no-install fctx-compiler fonts/BebasNeue-Regular.svg -r '[0-9:A-Z\u00b0.-]'
 
-compile_weather_font: install_deps
-	# Subset Weather Icons down to the icons listed in fonts/weather-icons.list
-	python3 scripts/build-weather-font.py
+compile_icon_font: install_deps
+	# Build the icon font from the sets listed in fonts/icons.list
+	python3 scripts/build-icon-font.py

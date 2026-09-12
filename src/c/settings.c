@@ -78,9 +78,20 @@ void default_settings() {
   g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
 }
 
+static bool prv_draws_icons(Complication complication) {
+  return complication == COMPLICATION_WEATHER ||
+         complication == COMPLICATION_STEPS ||
+         complication == COMPLICATION_HEART_RATE;
+}
+
 bool settings_want_weather() {
   return g_settings.top_complication == COMPLICATION_WEATHER ||
          g_settings.bottom_complication == COMPLICATION_WEATHER;
+}
+
+bool settings_want_icons() {
+  return prv_draws_icons(g_settings.top_complication) ||
+         prv_draws_icons(g_settings.bottom_complication);
 }
 
 bool update_settings(DictionaryIterator *iterator, void *context) {

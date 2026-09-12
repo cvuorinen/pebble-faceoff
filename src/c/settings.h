@@ -26,6 +26,8 @@ typedef enum {
   COMPLICATION_WEEKDAY = 2,
   COMPLICATION_DATE = 3,
   COMPLICATION_WEEKDAY_DATE = 4,
+  COMPLICATION_STEPS = 5,
+  COMPLICATION_HEART_RATE = 6,
 } Complication;
 
 typedef enum {
@@ -54,6 +56,10 @@ extern Settings g_settings;
 // True when a change means the weather reading should be chased up now rather
 // than at the next refresh.
 bool settings_want_weather();
+
+// True when either column draws something out of the icon font, which decides
+// whether that font is worth keeping in memory.
+bool settings_want_icons();
 
 void default_settings();
 bool update_settings(DictionaryIterator *iterator, void *context);

@@ -21,7 +21,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw
 
 ROOT = Path(__file__).resolve().parent.parent
-SVG = ROOT / "fonts" / "WeatherIcons.generated.svg"
+SVG = ROOT / "fonts" / "Icons.generated.svg"
 # The cap heights the face asks for across the platform range, give or take.
 SIZES = [16, 20, 24, 30]
 SUPERSAMPLE = 8
@@ -104,7 +104,7 @@ def main():
                         (col * cell, row * cell))
 
     out = (Path(sys.argv[1]) if len(sys.argv) > 1
-           else ROOT / "fonts" / "weather-icons-preview.png")
+           else ROOT / "fonts" / "icons-preview.png")
     sheet.resize((sheet.width * 4, sheet.height * 4), Image.NEAREST).save(out)
     print(f"{out}  columns: {SIZES}px")
     for (_code, name, _d), row in zip(glyphs, range(len(glyphs))):

@@ -1,7 +1,7 @@
 #include "weather.h"
 #include "message_keys.auto.h"
 #include "settings.h"
-#include "weather_icons.h"
+#include "icons.h"
 
 #define WEATHER_KEY 100
 
@@ -25,16 +25,16 @@ static Weather s_weather;
 static time_t s_requested_at;
 
 static const char *s_icons[] = {
-    [WEATHER_CLEAR_DAY] = WI_DAY_SUNNY,
-    [WEATHER_CLEAR_NIGHT] = WI_NIGHT_CLEAR,
-    [WEATHER_PARTLY_CLOUDY_DAY] = WI_DAY_CLOUDY,
-    [WEATHER_PARTLY_CLOUDY_NIGHT] = WI_NIGHT_ALT_CLOUDY,
-    [WEATHER_CLOUDY] = WI_CLOUD,
-    [WEATHER_RAIN] = WI_RAIN,
-    [WEATHER_SNOW] = WI_SNOW,
-    [WEATHER_FOG] = WI_FOG,
-    [WEATHER_THUNDERSTORM] = WI_THUNDERSTORM,
-    [WEATHER_UNKNOWN] = WI_NA,
+    [WEATHER_CLEAR_DAY] = ICON_DAY_SUNNY,
+    [WEATHER_CLEAR_NIGHT] = ICON_NIGHT_CLEAR,
+    [WEATHER_PARTLY_CLOUDY_DAY] = ICON_DAY_CLOUDY,
+    [WEATHER_PARTLY_CLOUDY_NIGHT] = ICON_NIGHT_ALT_CLOUDY,
+    [WEATHER_CLOUDY] = ICON_CLOUD,
+    [WEATHER_RAIN] = ICON_RAIN,
+    [WEATHER_SNOW] = ICON_SNOW,
+    [WEATHER_FOG] = ICON_FOG,
+    [WEATHER_THUNDERSTORM] = ICON_THUNDERSTORM,
+    [WEATHER_UNKNOWN] = ICON_NA,
 };
 
 void weather_init() {
@@ -94,7 +94,7 @@ void weather_refresh_if_due() {
 
 const char *weather_icon() {
   if (!prv_have_reading()) {
-    return WI_NA;
+    return ICON_NA;
   }
   return s_icons[s_weather.condition];
 }

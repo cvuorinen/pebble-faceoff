@@ -1,5 +1,5 @@
 /node_modules
 /build
 /.lock*
-/fonts/WeatherIcons.generated.svg
-/fonts/weather-icons-preview.png
+/fonts/Icons.generated.svg
+/fonts/icons-preview.png

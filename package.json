@@ -54,8 +54,16 @@
         },
         {
           "type": "raw",
-          "name": "WEATHERFONT",
-          "file": "WeatherIcons.ffont"
+          "name": "ICONFONT",
+          "file": "Icons.ffont",
+          "targetPlatforms": [
+            "basalt",
+            "chalk",
+            "diorite",
+            "emery",
+            "flint",
+            "gabbro"
+          ]
         },
         {
           "type": "bitmap",

@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Compile a handful of Weather Icons glyphs into an ffont for pebble-fctx.
+"""Compile a handful of icons into a single ffont for pebble-fctx.
 
-The upstream font carries 200-odd icons at 2048 units per em, far more than a
-watchface needs and far more than a Pebble's heap will hold -- ffont_create
-loads the whole font into RAM. So this takes the list in fonts/weather-icons.list
-and builds a font out of only those.
+Two upstream sets feed it, because neither covers what the face needs on its
+own. Weather Icons ships a whole SVG font of 200-odd glyphs -- far more than a
+watchface wants, and far more than a Pebble's heap will hold, since ffont_create
+loads the entire font into RAM. Material Symbols ships one SVG per icon, so only
+the ones named get vendored at all. Both are the outline style, which is what
+lets them sit next to each other on the same face.
+
+fonts/icons.list decides what goes in: a bare name is a Weather Icons class,
+and a "material:" prefix is a file under fonts/material-symbols.
 
 Two things have to happen on the way, neither of which fctx-compiler does:
 
@@ -32,12 +37,14 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SVG_IN = ROOT / "fonts" / "weathericons-regular-webfont.svg"
-CSS_IN = ROOT / "fonts" / "weathericons.css"
-LIST_IN = ROOT / "fonts" / "weather-icons.list"
-SVG_OUT = ROOT / "fonts" / "WeatherIcons.generated.svg"
-FFONT_OUT = ROOT / "resources" / "WeatherIcons.ffont"
-HEADER_OUT = ROOT / "src" / "c" / "weather_icons.h"
+WEATHER_SVG = ROOT / "fonts" / "weathericons-regular-webfont.svg"
+WEATHER_CSS = ROOT / "fonts" / "weathericons.css"
+MATERIAL_DIR = ROOT / "fonts" / "material-symbols"
+MATERIAL_PREFIX = "material:"
+LIST_IN = ROOT / "fonts" / "icons.list"
+SVG_OUT = ROOT / "fonts" / "Icons.generated.svg"
+FFONT_OUT = ROOT / "resources" / "Icons.ffont"
+HEADER_OUT = ROOT / "src" / "c" / "icons.h"
 
 UNITS_PER_EM = 2048
 # The square every icon is fitted into, and the font's cap height. Three
@@ -86,10 +93,10 @@ def parse_path(d):
 
 
 def to_absolute(d):
-    """Flatten a glyph outline to absolute M / L / Q / Z.
+    """Flatten an outline to absolute M / L / Q / C / Z.
 
-    Weather Icons only ever uses M z q h t l v, so cubics and arcs are a
-    hard error rather than something to silently mangle.
+    Arcs stay a hard error rather than something to silently mangle; neither
+    source uses them.
     """
     x = y = start_x = start_y = 0.0
     ctrl_x = ctrl_y = 0.0
@@ -109,6 +116,19 @@ def to_absolute(d):
         elif up == "V":
             y = y + a[0] if rel else a[0]
             out.append(("L", [x, y]))
+        elif up == "C":
+            c1x, c1y = (x + a[0], y + a[1]) if rel else (a[0], a[1])
+            c2x, c2y = (x + a[2], y + a[3]) if rel else (a[2], a[3])
+            nx, ny = (x + a[4], y + a[5]) if rel else (a[4], a[5])
+            out.append(("C", [c1x, c1y, c2x, c2y, nx, ny]))
+            ctrl_x, ctrl_y, x, y = c2x, c2y, nx, ny
+        elif up == "S":
+            # Smooth cubic: the first control point reflects the previous one.
+            c1x, c1y = 2 * x - ctrl_x, 2 * y - ctrl_y
+            c2x, c2y = (x + a[0], y + a[1]) if rel else (a[0], a[1])
+            nx, ny = (x + a[2], y + a[3]) if rel else (a[2], a[3])
+            out.append(("C", [c1x, c1y, c2x, c2y, nx, ny]))
+            ctrl_x, ctrl_y, x, y = c2x, c2y, nx, ny
         elif up == "Q":
             cx, cy = (x + a[0], y + a[1]) if rel else (a[0], a[1])
             nx, ny = (x + a[2], y + a[3]) if rel else (a[2], a[3])
@@ -124,8 +144,8 @@ def to_absolute(d):
             out.append(("Z", []))
             x, y = start_x, start_y
         else:
-            die(f"unsupported path command {cmd!r}; the converter only does M L H V Q T Z")
-        if up not in "QT":
+            die(f"unsupported path command {cmd!r}; no source should need arcs")
+        if up not in "QTCS":
             ctrl_x, ctrl_y = x, y
     return out
 
@@ -165,24 +185,41 @@ def render_path(segments):
 
 
 def load_names():
-    """Upstream ships no glyph-name attributes, so the CSS is the name map."""
-    css = CSS_IN.read_text(encoding="utf-8")
+    """Weather Icons ships no glyph-name attributes, so its CSS is the name map."""
+    css = WEATHER_CSS.read_text(encoding="utf-8")
     pairs = re.findall(r"\.(wi-[a-z0-9-]+):before\s*\{\s*content:\s*\"\\([0-9a-fA-F]+)\"",
                        css)
     if not pairs:
-        die(f"no icon names found in {CSS_IN}")
+        die(f"no icon names found in {WEATHER_CSS}")
     return {name: int(code, 16) for name, code in pairs}
 
 
 def load_glyphs():
-    svg = SVG_IN.read_text(encoding="utf-8")
+    svg = WEATHER_SVG.read_text(encoding="utf-8")
     out = {}
     for m in re.finditer(r'<glyph unicode="&#x([0-9a-f]+);"'
                          r'(?:\s+horiz-adv-x="(\d+)")?\s*d="([^"]*)"', svg):
         out[int(m.group(1), 16)] = m.group(3)
     if not out:
-        die(f"no glyphs found in {SVG_IN}")
+        die(f"no glyphs found in {WEATHER_SVG}")
     return out
+
+
+def load_material(name):
+    """A Material Symbols icon is a standalone SVG drawing rather than a font
+    glyph, so it arrives in screen coordinates: y grows downwards, out of a
+    viewBox with a negative origin. Negating y puts it back in font space."""
+    path = MATERIAL_DIR / f"{name}.svg"
+    if not path.exists():
+        die(f"{path} not found; fetch it from the Material Symbols repository")
+    outlines = re.findall(r'\bd="([^"]*)"', path.read_text(encoding="utf-8"))
+    if not outlines:
+        die(f"no outline in {path}")
+
+    segments = to_absolute(" ".join(outlines))
+
+    return [(cmd, [v if i % 2 == 0 else -v for i, v in enumerate(a)])
+            for cmd, a in segments]
 
 
 def load_wanted():
@@ -202,7 +239,10 @@ def load_wanted():
 
 
 def c_name(icon):
-    return "WI_" + icon[len("wi-"):].replace("-", "_").upper()
+    if icon.startswith(MATERIAL_PREFIX):
+        return "ICON_" + icon[len(MATERIAL_PREFIX):].replace("-", "_").upper()
+
+    return "ICON_" + icon[len("wi-"):].replace("-", "_").upper()
 
 
 def main():
@@ -210,16 +250,24 @@ def main():
 
     entries = []
     for index, icon in enumerate(wanted):
-        if icon not in names:
-            die(f"unknown icon {icon!r}; it is not in {CSS_IN.name}")
-        codepoint = names[icon]
-        if codepoint not in glyphs:
-            die(f"{icon} (U+{codepoint:04X}) has no outline in {SVG_IN.name}")
-        segments, scale = normalise(to_absolute(glyphs[codepoint]))
+        if icon.startswith(MATERIAL_PREFIX):
+            raw = load_material(icon[len(MATERIAL_PREFIX):])
+            origin = "Material Symbols"
+        else:
+            if icon not in names:
+                die(f"unknown icon {icon!r}; it is not in {WEATHER_CSS.name}")
+            codepoint = names[icon]
+            if codepoint not in glyphs:
+                die(f"{icon} (U+{codepoint:04X}) has no outline in "
+                    f"{WEATHER_SVG.name}")
+            raw = to_absolute(glyphs[codepoint])
+            origin = f"U+{codepoint:04X}"
+
+        segments, scale = normalise(raw)
         entries.append({
             "icon": icon,
             "code": ALPHABET[index],
-            "source": codepoint,
+            "origin": origin,
             "d": render_path(segments),
             "scale": scale,
         })
@@ -227,10 +275,10 @@ def main():
     SVG_OUT.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         '<?xml version="1.0" standalone="no"?>',
-        "<!-- Generated by scripts/build-weather-font.py. Do not edit. -->",
+        "<!-- Generated by scripts/build-icon-font.py. Do not edit. -->",
         '<svg xmlns="http://www.w3.org/2000/svg">',
         "<defs>",
-        f'<font id="WeatherIcons" horiz-adv-x="{ICON_BOX}">',
+        f'<font id="Icons" horiz-adv-x="{ICON_BOX}">',
         f'<font-face units-per-em="{UNITS_PER_EM}" ascent="{ICON_BOX}"'
         f' descent="0" cap-height="{ICON_BOX}" />',
         '<missing-glyph horiz-adv-x="0" />',
@@ -250,12 +298,12 @@ def main():
     if not FFONT_OUT.exists():
         die(f"fctx-compiler wrote no {FFONT_OUT}")
 
-    guard = "FACEOFF_WEATHER_ICONS_H"
+    guard = "FACEOFF_ICONS_H"
     header = [
-        "// Generated by scripts/build-weather-font.py. Do not edit.",
+        "// Generated by scripts/build-icon-font.py. Do not edit.",
         "//",
-        "// Each icon is one character of RESOURCE_ID_WEATHERFONT. Draw one with",
-        "// fctx_draw_string(&fctx, WI_DAY_SUNNY, s_weather_font, ...) -- the glyphs",
+        "// Each icon is one character of RESOURCE_ID_ICONFONT. Draw one with",
+        "// fctx_draw_string(&fctx, ICON_DAY_SUNNY, s_icon_font, ...) -- the glyphs",
         f"// are normalised to a {ICON_BOX}/{UNITS_PER_EM} em square, so the cap height "
         "set on the",
         "// context is the height the icon comes out.",
@@ -267,7 +315,7 @@ def main():
     width = max(len(c_name(e["icon"])) for e in entries)
     for e in entries:
         header.append(f'#define {c_name(e["icon"]):<{width}} "{e["code"]}"'
-                      f'  // U+{e["source"]:04X} {e["icon"]}')
+                      f'  // {e["icon"]} ({e["origin"]})')
     header += ["", f"#endif", ""]
     HEADER_OUT.write_text("\n".join(header), encoding="utf-8")
 

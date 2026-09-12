@@ -33,7 +33,7 @@ void weather_refresh_if_due();
 // needs a reading sooner than the next refresh would bring one.
 void weather_refresh();
 
-// One character of RESOURCE_ID_WEATHERFONT; see src/c/weather_icons.h.
+// One character of RESOURCE_ID_ICONFONT; see src/c/icons.h.
 const char *weather_icon();
 
 // "21°", or "--°" when there is nothing worth showing yet.

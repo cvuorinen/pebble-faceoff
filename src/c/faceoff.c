@@ -1,3 +1,5 @@
+#include "health.h"
+#include "icons.h"
 #include "settings.h"
 #include "weather.h"
 #include <pebble-fctx/fctx.h>
@@ -10,7 +12,7 @@
 
 static Window *s_window;
 static FFont *s_font;
-static FFont *s_weather_font;
+static FFont *s_icon_font;
 static Layer *s_time_layer;
 static Layer *s_background_layer;
 
@@ -229,19 +231,30 @@ static void prv_draw_complication(Layer *layer, GContext *ctx, tm *time,
   fctx_init_context(&fctx, ctx);
 
   static char s_mday_buffer[3];
-  static char s_temperature_buffer[8];
+  static char s_reading_buffer[8];
 
   const char *lines[COMPLICATION_MAX_LINES] = {NULL};
   int count = 0;
-  // Only ever the last line, and only for the weather.
+  // Only ever the last line, and only where a complication has one.
   bool ends_with_icon = false;
 
   switch (complication) {
   case COMPLICATION_WEATHER:
-    weather_temperature_string(s_temperature_buffer,
-                               sizeof(s_temperature_buffer));
-    lines[count++] = s_temperature_buffer;
+    weather_temperature_string(s_reading_buffer, sizeof(s_reading_buffer));
+    lines[count++] = s_reading_buffer;
     lines[count++] = weather_icon();
+    ends_with_icon = true;
+    break;
+  case COMPLICATION_STEPS:
+    health_steps_string(s_reading_buffer, sizeof(s_reading_buffer));
+    lines[count++] = s_reading_buffer;
+    lines[count++] = ICON_STEPS;
+    ends_with_icon = true;
+    break;
+  case COMPLICATION_HEART_RATE:
+    health_heart_rate_string(s_reading_buffer, sizeof(s_reading_buffer));
+    lines[count++] = s_reading_buffer;
+    lines[count++] = ICON_FAVORITE;
     ends_with_icon = true;
     break;
   case COMPLICATION_WEEKDAY_DATE:
@@ -275,10 +288,10 @@ static void prv_draw_complication(Layer *layer, GContext *ctx, tm *time,
     bool is_icon = ends_with_icon && line == count - 1;
     if (!is_icon) {
       prv_f_draw_text(&fctx, f_point, lines[line], s_font, color, alignment);
-    } else if (s_weather_font) {
-      fctx_set_text_cap_height(&fctx, s_weather_font,
+    } else if (s_icon_font) {
+      fctx_set_text_cap_height(&fctx, s_icon_font,
                                FIXED_TO_INT(prv_f_weather_icon_height(bounds)));
-      prv_f_draw_text(&fctx, f_point, lines[line], s_weather_font, color,
+      prv_f_draw_text(&fctx, f_point, lines[line], s_icon_font, color,
                       alignment);
     }
   }
@@ -410,21 +423,30 @@ static void prv_window_unload(Window *window) {
   layer_destroy(s_time_layer);
   layer_destroy(s_background_layer);
   ffont_destroy(s_font);
-  if (s_weather_font) {
-    ffont_destroy(s_weather_font);
+  if (s_icon_font) {
+    ffont_destroy(s_icon_font);
   }
 }
 
-// The icon font is a third of aplite's free heap, so it is only resident while
-// a complication is actually drawing icons out of it.
-static void prv_sync_weather_font() {
-  bool wanted = settings_want_weather();
-  if (wanted && !s_weather_font) {
-    s_weather_font = ffont_create_from_resource(RESOURCE_ID_WEATHERFONT);
-  } else if (!wanted && s_weather_font) {
-    ffont_destroy(s_weather_font);
-    s_weather_font = NULL;
+// Aplite never gets the icon font. It has 24K of app RAM, of which the time
+// font takes 4.4K and fctx's rasterisation buffers about 3K, leaving too little
+// for a 7K icon font -- fctx fails to allocate its flag buffer and the app
+// faults. So the font is left out of aplite's bundle entirely and its
+// complications draw their reading without an icon above it. Everywhere else it
+// is loaded only while a complication is actually drawing icons out of it,
+// which is still worth doing on the 64K platforms.
+static void prv_sync_icon_font() {
+#if defined(PBL_PLATFORM_APLITE)
+  return;
+#else
+  bool wanted = settings_want_icons();
+  if (wanted && !s_icon_font) {
+    s_icon_font = ffont_create_from_resource(RESOURCE_ID_ICONFONT);
+  } else if (!wanted && s_icon_font) {
+    ffont_destroy(s_icon_font);
+    s_icon_font = NULL;
   }
+#endif
 }
 
 static void prv_save_settings() {
@@ -446,7 +468,7 @@ static void prv_inbox_received_callback(DictionaryIterator *iterator,
   bool settings_dirty = update_settings(iterator, context);
   if (settings_dirty) {
     prv_save_settings();
-    prv_sync_weather_font();
+    prv_sync_icon_font();
     // Turning a weather complication on should not leave it blank until the
     // next refresh comes round.
     if (!wanted_weather && settings_want_weather()) {
@@ -487,7 +509,7 @@ static void prv_init(void) {
                                        });
 
   s_font = ffont_create_from_resource(RESOURCE_ID_TIMEFONT);
-  prv_sync_weather_font();
+  prv_sync_icon_font();
 
   Layer *window_layer = window_get_root_layer(s_window);
   GRect bounds = layer_get_bounds(window_layer);

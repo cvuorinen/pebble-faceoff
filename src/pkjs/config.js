@@ -1,3 +1,41 @@
+// Complication pickers are built rather than written out: the health readings
+// only exist on a watch that has a HealthService, and Clay gates whole items,
+// not individual options. Two items may share a messageKey as long as their
+// capabilities cannot both be satisfied, so each slot is emitted twice -- once
+// for health watches and once for the rest.
+var COMPLICATIONS = [
+	{ "label": "Nothing", "value": "0" },
+	{ "label": "Weather", "value": "1" },
+	{ "label": "Day of week", "value": "2" },
+	{ "label": "Date", "value": "3" },
+	{ "label": "Day of week + date", "value": "4" }
+];
+
+var HEALTH_COMPLICATIONS = [
+	{ "label": "Steps", "value": "5" },
+	{ "label": "Heart rate", "value": "6" }
+];
+
+function complicationPicker(messageKey, label, defaultValue, withHealth) {
+	return {
+		"type": "radiogroup",
+		"messageKey": messageKey,
+		"label": label,
+		"defaultValue": defaultValue,
+		"capabilities": [withHealth ? "HEALTH" : "NOT_HEALTH"],
+		"options": withHealth
+			? COMPLICATIONS.concat(HEALTH_COMPLICATIONS)
+			: COMPLICATIONS
+	};
+}
+
+function complicationPickers(messageKey, label, defaultValue) {
+	return [
+		complicationPicker(messageKey, label, defaultValue, true),
+		complicationPicker(messageKey, label, defaultValue, false)
+	];
+}
+
 module.exports = [
 	{
 		"type": "heading",
@@ -122,78 +160,27 @@ module.exports = [
 			{
 				"type": "text",
 				"defaultValue": "The two corners beside the time. Weather needs a location fix from your phone."
-			},
-				{
-					"type": "radiogroup",
-					"messageKey": "TOP_COMPLICATION",
-					"label": "Top Right",
-					"defaultValue": "1",
-					"options": [
-						{
-							"label": "Nothing",
-							"value": "0"
-						},
-						{
-							"label": "Weather",
-							"value": "1"
-						},
-						{
-							"label": "Day of week",
-							"value": "2"
-						},
-						{
-							"label": "Date",
-							"value": "3"
-						},
-						{
-							"label": "Day of week + date",
-							"value": "4"
-						}
-					]
-				},
-				{
-					"type": "radiogroup",
-					"messageKey": "BOTTOM_COMPLICATION",
-					"label": "Bottom Left",
-					"defaultValue": "3",
-					"options": [
-						{
-							"label": "Nothing",
-							"value": "0"
-						},
-						{
-							"label": "Weather",
-							"value": "1"
-						},
-						{
-							"label": "Day of week",
-							"value": "2"
-						},
-						{
-							"label": "Date",
-							"value": "3"
-						},
-						{
-							"label": "Day of week + date",
-							"value": "4"
-						}
-					]
-				},
-			{
-				"type": "color",
-				"capabilities": ["COLOR"],
-				"messageKey": "WDAY_COLOR",
-				"label": "Top Right Color",
-				"defaultValue": "0xFFFFFF"
-			},
-			{
-				"type": "color",
-				"capabilities": ["COLOR"],
-				"messageKey": "MDAY_COLOR",
-				"label": "Bottom Left Color",
-				"defaultValue": "0xFFFFFF"
 			}
-		]
+		].concat(
+			complicationPickers("TOP_COMPLICATION", "Top Right", "1"),
+			complicationPickers("BOTTOM_COMPLICATION", "Bottom Left", "3"),
+			[
+				{
+					"type": "color",
+					"capabilities": ["COLOR"],
+					"messageKey": "WDAY_COLOR",
+					"label": "Top Right Color",
+					"defaultValue": "0xFFFFFF"
+				},
+				{
+					"type": "color",
+					"capabilities": ["COLOR"],
+					"messageKey": "MDAY_COLOR",
+					"label": "Bottom Left Color",
+					"defaultValue": "0xFFFFFF"
+				}
+			]
+		)
 	},
 	{
 		"type": "section",
