@@ -5,6 +5,7 @@ module.exports = [
 	},
 	{
 		"type": "section",
+		"capabilities": ["COLOR"],
 		"items": [
 			{
 				"type": "heading",
@@ -27,6 +28,38 @@ module.exports = [
 				"messageKey": "BACKGROUND_COLOR",
 				"label": "Background Color",
 				"defaultValue": "0x000000"
+			},
+			{
+				"type": "toggle",
+				"messageKey": "FILL_CORNERS",
+				"label": "Fill Corners (Square Watches Only)",
+				"defaultValue": false
+			}
+		]
+	},
+	{
+		"type": "section",
+		"capabilities": ["BW"],
+		"items": [
+			{
+				"type": "heading",
+				"defaultValue": "Background Style"
+			},
+			{
+				"type": "radiogroup",
+				"messageKey": "BW_STRIPE_STYLE",
+				"label": "Stripes",
+				"defaultValue": "0",
+				"options": [
+					{
+						"label": "Dark top, light bottom",
+						"value": "0"
+					},
+					{
+						"label": "Light top, dark bottom",
+						"value": "1"
+					}
+				]
 			},
 			{
 				"type": "toggle",
@@ -65,12 +98,14 @@ module.exports = [
 			},
 			{
 				"type": "color",
+				"capabilities": ["COLOR"],
 				"messageKey": "HOUR_COLOR",
 				"label": "Hour Color",
 				"defaultValue": "0xFFFFFF"
 			},
 			{
 				"type": "color",
+				"capabilities": ["COLOR"],
 				"messageKey": "MINUTE_COLOR",
 				"label": "Minute Color",
 				"defaultValue": "0xFFFFFF"
@@ -92,12 +127,14 @@ module.exports = [
 			},
 			{
 				"type": "color",
+				"capabilities": ["COLOR"],
 				"messageKey": "WDAY_COLOR",
 				"label": "Day of Week Color",
 				"defaultValue": "0xFFFFFF"
 			},
 			{
 				"type": "color",
+				"capabilities": ["COLOR"],
 				"messageKey": "MDAY_COLOR",
 				"label": "Day of Month Color",
 				"defaultValue": "0xFFFFFF"

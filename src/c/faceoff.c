@@ -18,12 +18,42 @@ static const char *s_wdays[] = {"SUN", "MON", "TUE", "WED",
 static const char *s_months[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
                                  "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
 
+// On a one bit screen there is no palette to configure: one stripe is black,
+// the other white, and everything drawn on a stripe is the inverse of it.
+static GColor prv_stripe_color(bool top) {
+#ifdef PBL_BW
+  bool dark = (g_settings.bw_stripe_style == BW_STRIPES_DARK_TOP) == top;
+  return dark ? GColorBlack : GColorWhite;
+#else
+  return top ? g_settings.top_stripe_color : g_settings.bottom_stripe_color;
+#endif
+}
+
+// The uncovered corners are a dithered gray on BW, so the window colour
+// underneath them only ever shows through as the tone the dither starts from.
+static GColor prv_background_color() {
+  return PBL_IF_BW_ELSE(GColorBlack, g_settings.background_color);
+}
+
+static GColor prv_ink_color(bool top, GColor configured) {
+#ifdef PBL_BW
+  return gcolor_equal(prv_stripe_color(top), GColorBlack) ? GColorWhite
+                                                          : GColorBlack;
+#else
+  (void)top;
+  return configured;
+#endif
+}
+
 static int32_t prv_f_time_font_height(GRect bounds) {
   return INT_TO_FIXED(bounds.size.h / 3);
 }
 
+// A one bit screen has no antialiasing to hold a condensed face together, so
+// the date is set taller there -- at a tenth of the screen its counters close
+// up into slits and "09" stops reading as a number.
 static int32_t prv_f_date_font_height(GRect bounds) {
-  return INT_TO_FIXED(bounds.size.h / 10);
+  return INT_TO_FIXED(bounds.size.h / PBL_IF_BW_ELSE(9, 10));
 }
 
 static int32_t prv_f_time_font_radius(GRect bounds) {
@@ -49,8 +79,10 @@ static int32_t prv_f_date_line_height(GRect bounds) {
   return prv_f_date_font_height(bounds) * 4 / 3;
 }
 
+// Tightened on BW to pay for the taller date, which would otherwise push the
+// weekday off the right edge.
 static int32_t prv_f_date_font_gap(GRect bounds) {
-  return prv_f_date_font_height(bounds) / 2;
+  return prv_f_date_font_height(bounds) / PBL_IF_BW_ELSE(3, 2);
 }
 
 // How far a slanted line drops over a horizontal run of f_run.
@@ -118,9 +150,11 @@ static void prv_draw_time(Layer *layer, GContext *ctx, tm *time) {
   strftime(s_hour_buffer, sizeof(s_hour_buffer), use_24h ? "%H" : "%I", time);
   strftime(s_min_buffer, sizeof(s_min_buffer), "%M", time);
 
-  prv_f_draw_text(&fctx, f_hour_center, s_hour_buffer, g_settings.hour_color,
+  prv_f_draw_text(&fctx, f_hour_center, s_hour_buffer,
+                  prv_ink_color(true, g_settings.hour_color),
                   GTextAlignmentCenter);
-  prv_f_draw_text(&fctx, f_min_center, s_min_buffer, g_settings.minute_color,
+  prv_f_draw_text(&fctx, f_min_center, s_min_buffer,
+                  prv_ink_color(false, g_settings.minute_color),
                   GTextAlignmentCenter);
 
   fctx_deinit_context(&fctx);
@@ -151,10 +185,13 @@ static void prv_draw_date(Layer *layer, GContext *ctx, tm *time) {
       bounds, -f_radius - prv_f_date_line_height(bounds), -f_offset);
 
   prv_f_draw_text(&fctx, f_wday_center, s_wdays[time->tm_wday],
-                  g_settings.wday_color, GTextAlignmentLeft);
+                  prv_ink_color(true, g_settings.wday_color),
+                  GTextAlignmentLeft);
   prv_f_draw_text(&fctx, f_month_center, s_months[time->tm_mon],
-                  g_settings.mday_color, GTextAlignmentRight);
-  prv_f_draw_text(&fctx, f_mday_center, s_mday_buffer, g_settings.mday_color,
+                  prv_ink_color(false, g_settings.mday_color),
+                  GTextAlignmentRight);
+  prv_f_draw_text(&fctx, f_mday_center, s_mday_buffer,
+                  prv_ink_color(false, g_settings.mday_color),
                   GTextAlignmentRight);
 
   fctx_deinit_context(&fctx);
@@ -216,9 +253,41 @@ static void prv_draw_background_stripe(Layer *layer, GContext *ctx,
   fctx_deinit_context(&fctx);
 }
 
+#ifdef PBL_BW
+// The uncovered corners have to sit apart from both stripes, and a one bit
+// screen has no third tone -- so a checkerboard stands in for one. Written
+// straight into the frame buffer because fctx has no pattern fill.
+static void prv_fill_dithered_gray(GContext *ctx) {
+  GBitmap *frame_buffer =
+      graphics_capture_frame_buffer_format(ctx, GBitmapFormat1Bit);
+  if (!frame_buffer) {
+    return;
+  }
+
+  GRect fb_bounds = gbitmap_get_bounds(frame_buffer);
+  for (int y = fb_bounds.origin.y; y < fb_bounds.origin.y + fb_bounds.size.h;
+       y++) {
+    GBitmapDataRowInfo row = gbitmap_get_data_row_info(frame_buffer, y);
+    for (int x = row.min_x; x <= row.max_x; x++) {
+      uint8_t mask = 1 << (x % 8);
+      if ((x + y) % 2 == 0) {
+        row.data[x / 8] |= mask;
+      } else {
+        row.data[x / 8] &= ~mask;
+      }
+    }
+  }
+
+  graphics_release_frame_buffer(ctx, frame_buffer);
+}
+#endif
+
 static void prv_draw_background_layer(Layer *layer, GContext *ctx) {
-  prv_draw_background_stripe(layer, ctx, g_settings.top_stripe_color, false);
-  prv_draw_background_stripe(layer, ctx, g_settings.bottom_stripe_color, true);
+#ifdef PBL_BW
+  prv_fill_dithered_gray(ctx);
+#endif
+  prv_draw_background_stripe(layer, ctx, prv_stripe_color(true), false);
+  prv_draw_background_stripe(layer, ctx, prv_stripe_color(false), true);
 }
 
 static void prv_draw_time_layer(Layer *layer, GContext *ctx) {
@@ -236,7 +305,7 @@ static void prv_tick_handler(tm *_tick_time, TimeUnits _units_changed) {
 }
 
 static void prv_invalidate_layers() {
-  window_set_background_color(s_window, g_settings.background_color);
+  window_set_background_color(s_window, prv_background_color());
   layer_mark_dirty(s_time_layer);
   layer_mark_dirty(s_background_layer);
 }
@@ -310,9 +379,10 @@ static void prv_init(void) {
   s_time_layer = layer_create(bounds);
   layer_add_child(window_layer, s_time_layer);
 
-  window_set_background_color(s_window, g_settings.background_color);
+  window_set_background_color(s_window, prv_background_color());
 
-  UnobstructedAreaHandlers handlers = {
+  // Aplite compiles the subscription away, which leaves this unreferenced.
+  UnobstructedAreaHandlers handlers __attribute__((unused)) = {
       .will_change = prv_unobstructed_will_change_callback,
       .change = prv_unobstructed_change_callback,
       .did_change = prv_unobstructed_did_change_callback};

@@ -4,6 +4,7 @@ build: install_deps
 run: build
 	pebble install --emulator emery
 	pebble install --emulator gabbro
+	pebble install --emulator flint
 
 runphone: build
 	pebble install --phone "{{env_var('PHONE_IP')}}"

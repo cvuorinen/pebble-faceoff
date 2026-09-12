@@ -16,9 +16,12 @@
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
+      "aplite",
       "basalt",
       "chalk",
+      "diorite",
       "emery",
+      "flint",
       "gabbro"
     ],
     "watchapp": {
@@ -34,7 +37,8 @@
       "TIME_FORMAT",
       "SHOW_DATE",
       "WDAY_COLOR",
-      "MDAY_COLOR"
+      "MDAY_COLOR",
+      "BW_STRIPE_STYLE"
     ],
     "resources": {
       "media": [

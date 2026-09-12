@@ -3,8 +3,22 @@
 #include "message_keys.auto.h"
 #include "pebble.h"
 
+#define SETTINGS_KEY_V4 4
 #define SETTINGS_KEY_V3 3
 #define SETTINGS_KEY_V2 2
+
+typedef struct SettingsV4 {
+  GColor top_stripe_color;
+  GColor bottom_stripe_color;
+  GColor background_color;
+  bool fill_corners;
+  GColor hour_color;
+  GColor minute_color;
+  TimeFormat time_format;
+  bool show_date;
+  GColor wday_color;
+  GColor mday_color;
+} SettingsV4;
 
 typedef struct SettingsV3 {
   GColor top_stripe_color;
@@ -44,6 +58,7 @@ void default_settings() {
   g_settings.show_date = true;
   g_settings.wday_color = GColorWhite;
   g_settings.mday_color = GColorWhite;
+  g_settings.bw_stripe_style = BW_STRIPES_DARK_TOP;
 }
 
 bool update_settings(DictionaryIterator *iterator, void *context) {
@@ -118,7 +133,30 @@ bool update_settings(DictionaryIterator *iterator, void *context) {
     dirty = true;
   }
 
+  Tuple *bw_stripe_style_tuple =
+      dict_find(iterator, MESSAGE_KEY_BW_STRIPE_STYLE);
+  if (bw_stripe_style_tuple) {
+    // atoi returns 0 on error but that's fine because "0" is our default.
+    g_settings.bw_stripe_style =
+        (BWStripeStyle)atoi(bw_stripe_style_tuple->value->cstring);
+    dirty = true;
+  }
+
   return dirty;
+}
+
+static void prv_from_v4_settings(SettingsV4 v4) {
+  g_settings.top_stripe_color = v4.top_stripe_color;
+  g_settings.bottom_stripe_color = v4.bottom_stripe_color;
+  g_settings.background_color = v4.background_color;
+  g_settings.fill_corners = v4.fill_corners;
+  g_settings.hour_color = v4.hour_color;
+  g_settings.minute_color = v4.minute_color;
+  g_settings.time_format = v4.time_format;
+  g_settings.show_date = v4.show_date;
+  g_settings.wday_color = v4.wday_color;
+  g_settings.mday_color = v4.mday_color;
+  g_settings.bw_stripe_style = BW_STRIPES_DARK_TOP;
 }
 
 static void prv_from_v2_settings(SettingsV2 v2) {
@@ -132,6 +170,7 @@ static void prv_from_v2_settings(SettingsV2 v2) {
   g_settings.show_date = v2.show_date;
   g_settings.wday_color = v2.wday_color;
   g_settings.mday_color = v2.mday_color;
+  g_settings.bw_stripe_style = BW_STRIPES_DARK_TOP;
 }
 
 static void prv_from_v3_settings(SettingsV3 v3) {
@@ -146,9 +185,21 @@ static void prv_from_v3_settings(SettingsV3 v3) {
   g_settings.show_date = v3.show_date;
   g_settings.wday_color = v3.wday_color;
   g_settings.mday_color = v3.mday_color;
+  g_settings.bw_stripe_style = BW_STRIPES_DARK_TOP;
 }
 
 bool migrate_settings() {
+  SettingsV4 settings_v4;
+  if (persist_read_data(SETTINGS_KEY_V4, &settings_v4, sizeof(settings_v4)) !=
+      E_DOES_NOT_EXIST) {
+    prv_from_v4_settings(settings_v4);
+    persist_write_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
+    persist_delete(SETTINGS_KEY_V4);
+    persist_delete(SETTINGS_KEY_V3);
+    persist_delete(SETTINGS_KEY_V2);
+    return true;
+  }
+
   SettingsV3 settings_v3;
   if (persist_read_data(SETTINGS_KEY_V3, &settings_v3, sizeof(settings_v3)) !=
       E_DOES_NOT_EXIST) {

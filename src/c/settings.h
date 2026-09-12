@@ -3,13 +3,21 @@
 
 #include <pebble.h>
 
-#define SETTINGS_KEY 4
+#define SETTINGS_KEY 5
 
 typedef enum {
   TIME_FORMAT_SYSTEM = 0,
   TIME_FORMAT_12H = 1,
   TIME_FORMAT_24H = 2,
 } TimeFormat;
+
+// Black and white watches get no palette at all; the only choice is which end
+// of the face carries the dark stripe. The other stripe is light, and the text
+// on each stripe is the inverse of it.
+typedef enum {
+  BW_STRIPES_DARK_TOP = 0,
+  BW_STRIPES_LIGHT_TOP = 1,
+} BWStripeStyle;
 
 typedef struct Settings {
   GColor top_stripe_color;
@@ -22,6 +30,7 @@ typedef struct Settings {
   bool show_date;
   GColor wday_color;
   GColor mday_color;
+  BWStripeStyle bw_stripe_style;
 } Settings;
 
 extern Settings g_settings;
