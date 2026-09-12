@@ -1,8 +1,9 @@
 var Clay = require('@rebble/clay');
 var clayConfig = require('./config');
+var customClay = require('./custom-clay');
 var weather = require('./weather');
 
-var clay = new Clay(clayConfig);
+var clay = new Clay(clayConfig, customClay);
 
 Pebble.addEventListener('ready', function () {
   weather.fetch();

@@ -19,13 +19,13 @@ typedef enum {
   BW_STRIPES_LIGHT_TOP = 1,
 } BWStripeStyle;
 
-// What either of the two side columns shows. WEEKDAY and DATE are one and two
-// lines respectively; WEATHER is two.
+// What either of the two side columns shows, in one, two or three lines.
 typedef enum {
   COMPLICATION_NONE = 0,
   COMPLICATION_WEATHER = 1,
   COMPLICATION_WEEKDAY = 2,
   COMPLICATION_DATE = 3,
+  COMPLICATION_WEEKDAY_DATE = 4,
 } Complication;
 
 typedef enum {

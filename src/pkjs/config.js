@@ -144,6 +144,10 @@ module.exports = [
 						{
 							"label": "Date",
 							"value": "3"
+						},
+						{
+							"label": "Day of week + date",
+							"value": "4"
 						}
 					]
 				},
@@ -168,6 +172,10 @@ module.exports = [
 						{
 							"label": "Date",
 							"value": "3"
+						},
+						{
+							"label": "Day of week + date",
+							"value": "4"
 						}
 					]
 				},
@@ -192,10 +200,12 @@ module.exports = [
 		"items": [
 			{
 				"type": "heading",
+				"group": "weather",
 				"defaultValue": "Weather"
 			},
 			{
 				"type": "radiogroup",
+				"group": "weather",
 				"messageKey": "TEMPERATURE_UNIT",
 				"label": "Temperature unit",
 				"defaultValue": "0",

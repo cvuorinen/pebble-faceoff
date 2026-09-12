@@ -180,21 +180,40 @@ static int32_t prv_f_side_column_offset(FContext *fctx, GRect bounds) {
          prv_f_time_font_offset(bounds);
 }
 
-// A column holds up to two lines. They read downwards on both halves of the
-// face, so line 0 is the one further from the centre up top and the one nearer
-// it below; either way it is the upper of the pair. A single-line complication
-// uses line 1, which keeps it tucked against the centre where the weekday used
-// to sit.
-#define COMPLICATION_LINES 2
+#define COMPLICATION_MAX_LINES 3
 
+// The first line sits innermost, tucked against the time digits, and the rest
+// stack outwards from it. So a column reads downwards in the bottom half and
+// upwards in the top one, which is what puts the narrowest line -- the day of
+// the month, or the weather icon -- furthest from the centre. That is where a
+// round screen has the least width to give, and where a wide reading like
+// "-22°" would otherwise run off the edge.
 static FPoint prv_f_complication_point(GRect bounds, int32_t f_offset, bool top,
-                                       int line) {
-  int32_t f_radius = prv_f_date_font_radius(bounds) +
-                     (top ? COMPLICATION_LINES - 1 - line : line) *
-                         prv_f_date_line_height(bounds);
+                                       int line, int32_t f_line_height) {
+  int32_t f_radius = prv_f_date_font_radius(bounds) + line * f_line_height;
 
   return prv_f_slant_point(bounds, top ? f_radius : -f_radius,
                            top ? f_offset : -f_offset);
+}
+
+// Three lines will not fit the corner at the size one or two do -- the outer
+// one would climb past the top of the hour and out of the stripe. Most of what
+// has to be given back is taken out of the leading rather than the type, since
+// a one bit screen has no antialiasing and the glyphs are the part that stops
+// reading first: an eighth off the cap height and a sixth off the line lands
+// the top line level with the top of the hour on every platform.
+static int32_t prv_f_complication_text_height(GRect bounds, int count) {
+  int32_t f_height = prv_f_date_font_height(bounds);
+
+  return count < COMPLICATION_MAX_LINES ? f_height : f_height * 7 / 8;
+}
+
+static int32_t prv_f_complication_line_height(GRect bounds, int count) {
+  if (count < COMPLICATION_MAX_LINES) {
+    return prv_f_date_line_height(bounds);
+  }
+
+  return prv_f_complication_text_height(bounds, count) * 7 / 6;
 }
 
 static void prv_draw_complication(Layer *layer, GContext *ctx, tm *time,
@@ -209,53 +228,58 @@ static void prv_draw_complication(Layer *layer, GContext *ctx, tm *time,
   GRect bounds = layer_get_unobstructed_bounds(layer);
   fctx_init_context(&fctx, ctx);
 
-  int32_t f_offset = prv_f_side_column_offset(&fctx, bounds);
-  GColor color = prv_ink_color(
-      top, top ? g_settings.wday_color : g_settings.mday_color);
-  GTextAlignment alignment = top ? GTextAlignmentLeft : GTextAlignmentRight;
-  int32_t f_text_height = prv_f_date_font_height(bounds);
+  static char s_mday_buffer[3];
+  static char s_temperature_buffer[8];
 
-  static char s_upper_buffer[8];
-  static char s_lower_buffer[8];
-  const char *upper = NULL;
-  const char *lower = NULL;
-  bool lower_is_icon = false;
+  const char *lines[COMPLICATION_MAX_LINES] = {NULL};
+  int count = 0;
+  // Only ever the last line, and only for the weather.
+  bool ends_with_icon = false;
 
   switch (complication) {
   case COMPLICATION_WEATHER:
-    weather_temperature_string(s_upper_buffer, sizeof(s_upper_buffer));
-    upper = s_upper_buffer;
-    lower = weather_icon();
-    lower_is_icon = true;
+    weather_temperature_string(s_temperature_buffer,
+                               sizeof(s_temperature_buffer));
+    lines[count++] = s_temperature_buffer;
+    lines[count++] = weather_icon();
+    ends_with_icon = true;
     break;
+  case COMPLICATION_WEEKDAY_DATE:
+    lines[count++] = s_wdays[time->tm_wday];
+    // fall through
   case COMPLICATION_DATE:
-    strftime(s_lower_buffer, sizeof(s_lower_buffer), "%d", time);
-    upper = s_months[time->tm_mon];
-    lower = s_lower_buffer;
+    strftime(s_mday_buffer, sizeof(s_mday_buffer), "%d", time);
+    lines[count++] = s_months[time->tm_mon];
+    lines[count++] = s_mday_buffer;
     break;
   case COMPLICATION_WEEKDAY:
-    lower = s_wdays[time->tm_wday];
+    lines[count++] = s_wdays[time->tm_wday];
     break;
   case COMPLICATION_NONE:
     break;
   }
 
-  fctx_set_text_cap_height(&fctx, s_font, FIXED_TO_INT(f_text_height));
-  if (upper) {
-    prv_f_draw_text(&fctx, prv_f_complication_point(bounds, f_offset, top, 0),
-                    upper, s_font, color, alignment);
-  }
+  int32_t f_offset = prv_f_side_column_offset(&fctx, bounds);
+  int32_t f_line_height = prv_f_complication_line_height(bounds, count);
+  GColor color =
+      prv_ink_color(top, top ? g_settings.wday_color : g_settings.mday_color);
+  GTextAlignment alignment = top ? GTextAlignmentLeft : GTextAlignmentRight;
 
-  if (lower) {
-    FPoint f_point = prv_f_complication_point(bounds, f_offset, top, 1);
-    if (lower_is_icon) {
-      if (s_weather_font) {
-        fctx_set_text_cap_height(
-            &fctx, s_weather_font, FIXED_TO_INT(prv_f_weather_icon_height(bounds)));
-        prv_f_draw_text(&fctx, f_point, lower, s_weather_font, color, alignment);
-      }
-    } else {
-      prv_f_draw_text(&fctx, f_point, lower, s_font, color, alignment);
+  fctx_set_text_cap_height(
+      &fctx, s_font,
+      FIXED_TO_INT(prv_f_complication_text_height(bounds, count)));
+
+  for (int line = 0; line < count; line++) {
+    FPoint f_point =
+        prv_f_complication_point(bounds, f_offset, top, line, f_line_height);
+    bool is_icon = ends_with_icon && line == count - 1;
+    if (!is_icon) {
+      prv_f_draw_text(&fctx, f_point, lines[line], s_font, color, alignment);
+    } else if (s_weather_font) {
+      fctx_set_text_cap_height(&fctx, s_weather_font,
+                               FIXED_TO_INT(prv_f_weather_icon_height(bounds)));
+      prv_f_draw_text(&fctx, f_point, lines[line], s_weather_font, color,
+                      alignment);
     }
   }
 
