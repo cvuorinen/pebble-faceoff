@@ -85,6 +85,12 @@ static int32_t prv_f_weather_icon_height(GRect bounds) {
   return prv_f_date_font_height(bounds) * 4 / 3;
 }
 
+// Being the taller of the two, an icon all but fills the line it is given, and
+// lands against the reading above it. This pushes it further out to open a gap.
+static int32_t prv_f_icon_gap(GRect bounds) {
+  return prv_f_date_font_height(bounds) / 3;
+}
+
 static int32_t prv_f_date_line_height(GRect bounds) {
   return prv_f_date_font_height(bounds) * 4 / 3;
 }
@@ -191,8 +197,10 @@ static int32_t prv_f_side_column_offset(FContext *fctx, GRect bounds) {
 // round screen has the least width to give, and where a wide reading like
 // "-22°" would otherwise run off the edge.
 static FPoint prv_f_complication_point(GRect bounds, int32_t f_offset, bool top,
-                                       int line, int32_t f_line_height) {
-  int32_t f_radius = prv_f_date_font_radius(bounds) + line * f_line_height;
+                                       int line, int32_t f_line_height,
+                                       int32_t f_extra) {
+  int32_t f_radius =
+      prv_f_date_font_radius(bounds) + line * f_line_height + f_extra;
 
   return prv_f_slant_point(bounds, top ? f_radius : -f_radius,
                            top ? f_offset : -f_offset);
@@ -283,9 +291,10 @@ static void prv_draw_complication(Layer *layer, GContext *ctx, tm *time,
       FIXED_TO_INT(prv_f_complication_text_height(bounds, count)));
 
   for (int line = 0; line < count; line++) {
-    FPoint f_point =
-        prv_f_complication_point(bounds, f_offset, top, line, f_line_height);
     bool is_icon = ends_with_icon && line == count - 1;
+    FPoint f_point = prv_f_complication_point(
+        bounds, f_offset, top, line, f_line_height,
+        is_icon ? prv_f_icon_gap(bounds) : 0);
     if (!is_icon) {
       prv_f_draw_text(&fctx, f_point, lines[line], s_font, color, alignment);
     } else if (s_icon_font) {

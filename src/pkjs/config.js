@@ -18,7 +18,7 @@ var HEALTH_COMPLICATIONS = [
 
 function complicationPicker(messageKey, label, defaultValue, withHealth) {
 	return {
-		"type": "radiogroup",
+		"type": "select",
 		"messageKey": messageKey,
 		"label": label,
 		"defaultValue": defaultValue,
