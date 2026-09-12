@@ -12,5 +12,6 @@ install_deps:
 	npm install
 	
 compile_font: install_deps
-	# Compile our font for all digits and all the letters in three  latter day names
-	npx --no-install fctx-compiler fonts/BebasNeue-Regular.svg -r '[0-9:URSNIADHFTOWME]'
+	# Compile our font for all digits and the uppercase letters used by the day
+	# and month abbreviations
+	npx --no-install fctx-compiler fonts/BebasNeue-Regular.svg -r '[0-9:A-Z]'

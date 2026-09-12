@@ -4,10 +4,8 @@
 #include <pebble.h>
 #include <time.h>
 
-// -22.5 deg
-#define TEXT_ANGLE (-45 * TRIG_MAX_ANGLE / 720)
-// 67.5 deg
-#define SLANT_ANGLE (TEXT_ANGLE + 90 * TRIG_MAX_ANGLE / 360)
+#define TEXT_ANGLE_DEGREES (-7)
+#define TEXT_ANGLE (TEXT_ANGLE_DEGREES * TRIG_MAX_ANGLE / 360)
 
 static Window *s_window;
 static FFont *s_font;
@@ -16,6 +14,9 @@ static Layer *s_background_layer;
 
 static const char *s_wdays[] = {"SUN", "MON", "TUE", "WED",
                                 "THU", "FRI", "SAT"};
+
+static const char *s_months[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                 "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
 
 static int32_t prv_f_time_font_height(GRect bounds) {
   return INT_TO_FIXED(bounds.size.h / 3);
@@ -29,24 +30,69 @@ static int32_t prv_f_time_font_radius(GRect bounds) {
   return INT_TO_FIXED(bounds.size.h) / 3 - INT_TO_FIXED(bounds.size.h) / 9;
 }
 
-static int32_t prv_f_date_font_radius(GRect bounds) {
-  return prv_f_time_font_radius(bounds) - prv_f_time_font_height(bounds) / 2 +
-         prv_f_date_font_height(bounds) / 2;
+// Keeps the date and weekday clear of the line where the stripes meet.
+static int32_t prv_f_date_font_padding(GRect bounds) {
+  return prv_f_date_font_height(bounds) / 6;
 }
 
-static int32_t prv_f_date_font_offset(GRect bounds) {
-  return INT_TO_FIXED(bounds.size.h) / 2 - INT_TO_FIXED(bounds.size.h) / 5;
+static int32_t prv_f_date_font_radius(GRect bounds) {
+  return prv_f_time_font_radius(bounds) - prv_f_time_font_height(bounds) / 2 +
+         prv_f_date_font_height(bounds) / 2 + prv_f_date_font_padding(bounds);
+}
+
+// How far the hour and minute are nudged apart along the slant.
+static int32_t prv_f_time_font_offset(GRect bounds) {
+  return prv_f_time_font_height(bounds) / 6;
+}
+
+static int32_t prv_f_date_line_height(GRect bounds) {
+  return prv_f_date_font_height(bounds) * 4 / 3;
+}
+
+static int32_t prv_f_date_font_gap(GRect bounds) {
+  return prv_f_date_font_height(bounds) / 2;
+}
+
+// How far a slanted line drops over a horizontal run of f_run.
+static int32_t prv_f_slant_rise(int32_t f_run) {
+  return -f_run * sin_lookup(TEXT_ANGLE) / cos_lookup(TEXT_ANGLE);
+}
+
+// Thickness of a stripe, measured perpendicular to the slant, so that it
+// always covers the time digits regardless of the slant angle.
+static int32_t prv_f_stripe_thickness(GRect bounds) {
+  return prv_f_time_font_radius(bounds) +
+         prv_f_time_font_height(bounds) * 3 / 4;
+}
+
+static int32_t prv_f_stripe_vertical_thickness(GRect bounds) {
+  return prv_f_stripe_thickness(bounds) * TRIG_MAX_RATIO /
+         cos_lookup(TEXT_ANGLE);
+}
+
+// Positions a point f_radius perpendicular to the slant through the center of
+// the screen, then f_offset along it.
+static FPoint prv_f_slant_point(GRect bounds, int32_t f_radius,
+                                int32_t f_offset) {
+  FPoint f_center =
+      FPoint(INT_TO_FIXED(bounds.size.w / 2), INT_TO_FIXED(bounds.size.h / 2));
+
+  return FPoint(f_center.x + (sin_lookup(TEXT_ANGLE) * f_radius +
+                              cos_lookup(TEXT_ANGLE) * f_offset) /
+                                 TRIG_MAX_RATIO,
+                f_center.y + (sin_lookup(TEXT_ANGLE) * f_offset -
+                              cos_lookup(TEXT_ANGLE) * f_radius) /
+                                 TRIG_MAX_RATIO);
 }
 
 static void prv_f_draw_text(FContext *fctx, FPoint f_center, const char *text,
-                            GColor color) {
+                            GColor color, GTextAlignment alignment) {
   fctx_set_rotation(fctx, TEXT_ANGLE);
 
   fctx_begin_fill(fctx);
   fctx_set_offset(fctx, f_center);
   fctx_set_fill_color(fctx, color);
-  fctx_draw_string(fctx, text, s_font, GTextAlignmentCenter,
-                   FTextAnchorCapMiddle);
+  fctx_draw_string(fctx, text, s_font, alignment, FTextAnchorCapMiddle);
   fctx_end_fill(fctx);
 }
 
@@ -59,28 +105,23 @@ static void prv_draw_time(Layer *layer, GContext *ctx, tm *time) {
                            FIXED_TO_INT(prv_f_time_font_height(bounds)));
 
   int32_t f_radius = prv_f_time_font_radius(bounds);
+  int32_t f_offset = prv_f_time_font_offset(bounds);
 
-  FPoint f_center =
-      FPoint(INT_TO_FIXED(bounds.size.w / 2), INT_TO_FIXED(bounds.size.h / 2));
-
-  FPoint f_hour_center =
-      FPoint(f_center.x + sin_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO,
-             f_center.y - cos_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO);
-
-  FPoint f_min_center =
-      FPoint(f_center.x - sin_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO,
-             f_center.y + cos_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO);
+  FPoint f_hour_center = prv_f_slant_point(bounds, f_radius, -f_offset);
+  FPoint f_min_center = prv_f_slant_point(bounds, -f_radius, f_offset);
 
   static char s_hour_buffer[3];
   static char s_min_buffer[3];
-  bool use_24h = g_settings.time_format == TIME_FORMAT_24H ||
-                 (g_settings.time_format == TIME_FORMAT_SYSTEM &&
-                  clock_is_24h_style());
+  bool use_24h =
+      g_settings.time_format == TIME_FORMAT_24H ||
+      (g_settings.time_format == TIME_FORMAT_SYSTEM && clock_is_24h_style());
   strftime(s_hour_buffer, sizeof(s_hour_buffer), use_24h ? "%H" : "%I", time);
   strftime(s_min_buffer, sizeof(s_min_buffer), "%M", time);
 
-  prv_f_draw_text(&fctx, f_hour_center, s_hour_buffer, g_settings.hour_color);
-  prv_f_draw_text(&fctx, f_min_center, s_min_buffer, g_settings.minute_color);
+  prv_f_draw_text(&fctx, f_hour_center, s_hour_buffer, g_settings.hour_color,
+                  GTextAlignmentCenter);
+  prv_f_draw_text(&fctx, f_min_center, s_min_buffer, g_settings.minute_color,
+                  GTextAlignmentCenter);
 
   fctx_deinit_context(&fctx);
 }
@@ -90,34 +131,31 @@ static void prv_draw_date(Layer *layer, GContext *ctx, tm *time) {
   GRect bounds = layer_get_unobstructed_bounds(layer);
   fctx_init_context(&fctx, ctx);
 
+  static char s_mday_buffer[3];
+  strftime(s_mday_buffer, sizeof(s_mday_buffer), "%d", time);
+
+  fctx_set_text_cap_height(&fctx, s_font,
+                           FIXED_TO_INT(prv_f_time_font_height(bounds)));
+  int32_t f_time_half_width = fctx_string_width(&fctx, "00", s_font) / 2;
+
   fctx_set_text_cap_height(&fctx, s_font,
                            FIXED_TO_INT(prv_f_date_font_height(bounds)));
 
   int32_t f_radius = prv_f_date_font_radius(bounds);
-  int32_t f_offset = prv_f_date_font_offset(bounds);
-  int32_t perp_angle = TEXT_ANGLE + TRIG_MAX_ANGLE * 90 / 360;
+  int32_t f_offset = f_time_half_width + prv_f_date_font_gap(bounds) -
+                     prv_f_time_font_offset(bounds);
 
-  FPoint f_center =
-      FPoint(INT_TO_FIXED(bounds.size.w / 2), INT_TO_FIXED(bounds.size.h / 2));
-
-  FPoint f_wday_center =
-      FPoint(f_center.x + sin_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO -
-                 sin_lookup(perp_angle) * f_offset / TRIG_MAX_RATIO,
-             f_center.y - cos_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO +
-                 cos_lookup(perp_angle) * f_offset / TRIG_MAX_RATIO);
-
-  FPoint f_mday_center =
-      FPoint(f_center.x - sin_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO +
-                 sin_lookup(perp_angle) * f_offset / TRIG_MAX_RATIO,
-             f_center.y + cos_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO -
-                 cos_lookup(perp_angle) * f_offset / TRIG_MAX_RATIO);
-
-  static char s_mday_buffer[3];
-  strftime(s_mday_buffer, sizeof(s_mday_buffer), "%d", time);
+  FPoint f_wday_center = prv_f_slant_point(bounds, f_radius, f_offset);
+  FPoint f_month_center = prv_f_slant_point(bounds, -f_radius, -f_offset);
+  FPoint f_mday_center = prv_f_slant_point(
+      bounds, -f_radius - prv_f_date_line_height(bounds), -f_offset);
 
   prv_f_draw_text(&fctx, f_wday_center, s_wdays[time->tm_wday],
-                  g_settings.wday_color);
-  prv_f_draw_text(&fctx, f_mday_center, s_mday_buffer, g_settings.mday_color);
+                  g_settings.wday_color, GTextAlignmentLeft);
+  prv_f_draw_text(&fctx, f_month_center, s_months[time->tm_mon],
+                  g_settings.mday_color, GTextAlignmentRight);
+  prv_f_draw_text(&fctx, f_mday_center, s_mday_buffer, g_settings.mday_color,
+                  GTextAlignmentRight);
 
   fctx_deinit_context(&fctx);
 }
@@ -134,16 +172,9 @@ static void prv_draw_background_stripe(Layer *layer, GContext *ctx,
   FPoint f_bounds =
       FPoint(INT_TO_FIXED(bounds.size.w), INT_TO_FIXED(bounds.size.h));
 
-  int32_t f_stripe_width = prv_f_time_font_height(bounds);
-  int32_t f_padding = prv_f_time_font_radius(bounds) - f_stripe_width / 4;
+  int32_t f_stripe_rise = prv_f_slant_rise(f_bounds.x);
 
-  int32_t f_center_to_stripe_bottom_left_offset =
-      f_center.x * cos_lookup(SLANT_ANGLE) / sin_lookup(SLANT_ANGLE);
-
-  int32_t f_stripe_vertical_height =
-      f_bounds.x * cos_lookup(SLANT_ANGLE) / sin_lookup(SLANT_ANGLE);
-
-  int32_t f_height_offset = -f_stripe_vertical_height - f_padding;
+  int32_t f_height_offset = -prv_f_stripe_vertical_thickness(bounds);
   // Hackfix: there is some minor blending that causes a black stripe between
   // two adjacent stripes I've "found that 1/4 of a pixel is enough to hide
   // this.
@@ -153,15 +184,14 @@ static void prv_draw_background_stripe(Layer *layer, GContext *ctx,
     f_aa_hackfix_offset *= -1;
   }
 
-  FPoint lower_left_point =
-      FPoint(0, f_center.y + f_center_to_stripe_bottom_left_offset +
-                    f_aa_hackfix_offset);
+  FPoint lower_left_point = FPoint(
+      0, f_center.y + prv_f_slant_rise(f_center.x) + f_aa_hackfix_offset);
 
   FPoint upper_left_point =
       FPoint(0, lower_left_point.y + f_height_offset + f_aa_hackfix_offset);
 
   FPoint lower_right_point =
-      FPoint(f_bounds.x, lower_left_point.y - f_stripe_vertical_height);
+      FPoint(f_bounds.x, lower_left_point.y - f_stripe_rise);
 
   FPoint upper_right_point =
       FPoint(f_bounds.x, lower_right_point.y + f_height_offset);
