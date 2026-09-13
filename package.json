@@ -12,7 +12,7 @@
   },
   "pebble": {
     "displayName": "Faceoff Remix",
-    "uuid": "b7990d2d-4ea8-4d2c-9b54-603ae7546fee",
+    "uuid": "53658c0d-1ada-4069-98df-7342270a2b50",
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
@@ -80,5 +80,9 @@
   },
   "devDependencies": {
     "pebble-fctx-compiler": "^1.2.2"
+  },
+  "scripts": {
+    "compile-font": "npx --no-install fctx-compiler fonts/BebasNeue-Regular.svg -r '[0-9:A-Z\u00b0.-]'",
+    "compile-icon-font": "python3 scripts/build-icon-font.py"
   }
 }

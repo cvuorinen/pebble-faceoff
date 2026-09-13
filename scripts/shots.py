@@ -91,7 +91,7 @@ PRESETS = {
     "weekday-date": dict(bottom="weekday-date"),
 
     # The health readings, each beside the date.
-    "steps":        dict(top="steps", bottom="weekday-date", steps=8432),
+    "steps":        dict(top="heart", bottom="steps", steps=8432),
     "heart":        dict(top="heart", bottom="weekday-date"),
     # A five-figure count, the widest the steps column ever has to hold.
     "walked":       dict(top="steps", bottom="date", steps=12040),
@@ -126,6 +126,32 @@ PRESETS = {
     # The one bit face the other way up. A no-op anywhere but aplite, diorite
     # and flint.
     "light-top":    dict(bw_style="light-top", bottom="weekday-date"),
+
+    # Store shots
+    "red-black":    dict(top="heart", bottom="steps", steps=8432,
+                         colors=dict(top_stripe="red",
+                                     bottom_stripe="black",
+                                     background="dark-gray")),
+    "black-white":  dict(top="weather", bottom="steps", steps=8432,
+                         colors=dict(top_stripe="black",
+                                     bottom_stripe="white",
+                                     minute="black",
+                                     bottom_text="black",
+                                     background="dark-gray")),
+    "white-blue":   dict(top="weather", bottom="weekday-date",
+                         fill_corners=True,
+                         colors=dict(top_stripe="white",
+                                     bottom_stripe="duke-blue",
+                                     hour="duke-blue",
+                                     top_text="duke-blue")),
+    "brass-purple": dict(top="weekday", bottom="date",
+                         colors=dict(top_stripe="imperial-purple",
+                                     bottom_stripe="brass",
+                                     hour="brass",
+                                     top_text="brass",
+                                     minute="imperial-purple",
+                                     bottom_text="imperial-purple",
+                                     background="midnight-green")),
 }
 
 # Which presets each platform is shot with. "*" is the fallback for any
@@ -133,10 +159,10 @@ PRESETS = {
 # rather than recolored, and aplite -- which has neither a health service nor
 # the room for the icon font -- gets the readings it can actually draw.
 PLATFORM_SHOTS = {
-    "*":       ["default", "weekday-date", "steps", "recolored"],
-    "aplite":  ["default", "weekday-date", "bare", "light-top"],
-    "diorite": ["default", "weekday-date", "steps", "light-top"],
-    "flint":   ["default", "weekday-date", "steps", "light-top"],
+    "*":       ["default", "red-black", "black-white", "white-blue", "brass-purple"],
+    "aplite":  ["default", "bare", "light-top"],
+    "diorite": ["default", "steps", "light-top"],
+    "flint":   ["default", "steps", "light-top"],
 }
 
 # What a shot draws unless a preset says otherwise. The settings here are the
@@ -208,6 +234,7 @@ COLORS = {
     "duke-blue": 0x0000AA, "vivid-violet": 0xAA00FF, "purple": 0xAA00AA,
     "magenta": 0xFF00FF, "shocking-pink": 0xFF55FF, "brilliant-rose": 0xFF55AA,
     "melon": 0xFFAAAA, "rajah": 0xFFAA55, "windsor-tan": 0xAA5500,
+    "brass": 0xAAAA55, "imperial-purple": 0x550055, "midnight-green": 0x005555,
 }
 
 # --------------------------------------------------------------------------
