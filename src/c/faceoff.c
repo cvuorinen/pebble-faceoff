@@ -734,9 +734,8 @@ static void prv_save_settings() {
 static void prv_load_settings() {
   default_settings();
 #ifndef SHOT_CONFIG
-  if (!migrate_settings()) {
-    persist_read_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
-  }
+  // Leaves the defaults standing until something has been saved.
+  persist_read_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
 #endif
 }
 

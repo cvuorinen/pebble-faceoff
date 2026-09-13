@@ -3,7 +3,12 @@
 
 #include <pebble.h>
 
-#define SETTINGS_KEY 5
+// The one key the settings have ever been saved under. There is no migration
+// because there has never been anything to migrate from: the watchface has a
+// UUID of its own, and a watch sandboxes an app's persistent storage by UUID,
+// so the store starts empty everywhere. Changing the struct after the first
+// release does need one -- save under a new key and read the old one once.
+#define SETTINGS_KEY 1
 
 typedef enum {
   TIME_FORMAT_SYSTEM = 0,
@@ -64,6 +69,5 @@ bool settings_want_icons();
 
 void default_settings();
 bool update_settings(DictionaryIterator *iterator, void *context);
-bool migrate_settings();
 
 #endif
