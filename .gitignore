@@ -1,3 +1,8 @@
 /node_modules
 /build
 /.lock*
+/fonts/Icons.generated.svg
+/fonts/icons-preview.png
+/src/c/shot_config.h
+/shots
+__pycache__/

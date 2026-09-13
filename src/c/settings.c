@@ -3,37 +3,35 @@
 #include "message_keys.auto.h"
 #include "pebble.h"
 
-#define SETTINGS_KEY_V3 3
-#define SETTINGS_KEY_V2 2
-
-typedef struct SettingsV3 {
-  GColor top_stripe_color;
-  GColor bottom_stripe_color;
-  GColor background_color;
-  bool fill_corners;
-  GColor hour_color;
-  GColor minute_color;
-  bool show_24h_time;
-  bool show_date;
-  GColor wday_color;
-  GColor mday_color;
-} SettingsV3;
-
-typedef struct SettingsV2 {
-  GColor top_stripe_color;
-  GColor bottom_stripe_color;
-  GColor background_color;
-  bool fill_corners;
-  GColor hour_color;
-  GColor minute_color;
-  bool show_date;
-  GColor wday_color;
-  GColor mday_color;
-} SettingsV2;
+#ifdef SHOT_CONFIG
+#include "shot_config.h"
+#endif
 
 Settings g_settings;
 
 void default_settings() {
+#ifdef SHOT_CONFIG
+  // A screenshot build draws the settings scripts/shots.py pinned, so a shot
+  // comes out the same whatever the emulator was last left configured as --
+  // and there is nothing saved to read, since prv_load_settings skips the
+  // persisted copy entirely.
+  g_settings.top_stripe_color = GColorFromHEX(SHOT_TOP_STRIPE_COLOR);
+  g_settings.bottom_stripe_color = GColorFromHEX(SHOT_BOTTOM_STRIPE_COLOR);
+  g_settings.background_color = GColorFromHEX(SHOT_BACKGROUND_COLOR);
+  g_settings.fill_corners = SHOT_FILL_CORNERS;
+  g_settings.hour_color = GColorFromHEX(SHOT_HOUR_COLOR);
+  g_settings.minute_color = GColorFromHEX(SHOT_MINUTE_COLOR);
+  g_settings.time_format = SHOT_TIME_FORMAT;
+  g_settings.wday_color = GColorFromHEX(SHOT_TOP_TEXT_COLOR);
+  g_settings.mday_color = GColorFromHEX(SHOT_BOTTOM_TEXT_COLOR);
+  g_settings.bw_stripe_style = SHOT_BW_STRIPE_STYLE;
+  g_settings.top_complication = SHOT_TOP_COMPLICATION;
+  g_settings.bottom_complication = SHOT_BOTTOM_COMPLICATION;
+  g_settings.temperature_unit = SHOT_TEMPERATURE_UNIT;
+  // A shot never plays the intro anyway -- prv_play_intro is a no-op in a
+  // screenshot build -- but the field is not left to whatever was on the stack.
+  g_settings.intro_animation = false;
+#else
   g_settings.top_stripe_color = GColorJazzberryJam;
   g_settings.bottom_stripe_color = GColorVeryLightBlue;
   g_settings.background_color = GColorBlack;
@@ -41,12 +39,41 @@ void default_settings() {
   g_settings.hour_color = GColorWhite;
   g_settings.minute_color = GColorWhite;
   g_settings.time_format = TIME_FORMAT_SYSTEM;
-  g_settings.show_date = true;
   g_settings.wday_color = GColorWhite;
   g_settings.mday_color = GColorWhite;
+  g_settings.bw_stripe_style = BW_STRIPES_DARK_TOP;
+  g_settings.top_complication = COMPLICATION_WEATHER;
+  g_settings.bottom_complication = COMPLICATION_DATE;
+  g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
+  g_settings.intro_animation = true;
+#endif
+}
+
+static bool prv_draws_icons(Complication complication) {
+  return complication == COMPLICATION_WEATHER ||
+         complication == COMPLICATION_STEPS ||
+         complication == COMPLICATION_HEART_RATE;
+}
+
+bool settings_want_weather() {
+  return g_settings.top_complication == COMPLICATION_WEATHER ||
+         g_settings.bottom_complication == COMPLICATION_WEATHER;
+}
+
+bool settings_want_icons() {
+  return prv_draws_icons(g_settings.top_complication) ||
+         prv_draws_icons(g_settings.bottom_complication);
 }
 
 bool update_settings(DictionaryIterator *iterator, void *context) {
+#ifdef SHOT_CONFIG
+  // Nothing the phone says can move a pinned shot. Clay only pushes when the
+  // config page is saved, but a shot should not depend on nobody having opened
+  // it.
+  (void)iterator;
+  (void)context;
+  return false;
+#else
   bool dirty = false;
 
   Tuple *top_stripe_color_tuple =
@@ -100,9 +127,35 @@ bool update_settings(DictionaryIterator *iterator, void *context) {
     dirty = true;
   }
 
-  Tuple *show_date_tuple = dict_find(iterator, MESSAGE_KEY_SHOW_DATE);
-  if (show_date_tuple) {
-    g_settings.show_date = show_date_tuple->value->int32 == 1;
+  Tuple *top_complication_tuple =
+      dict_find(iterator, MESSAGE_KEY_TOP_COMPLICATION);
+  if (top_complication_tuple) {
+    // atoi returns 0 on error but that's fine because "0" is our default.
+    g_settings.top_complication =
+        (Complication)atoi(top_complication_tuple->value->cstring);
+    dirty = true;
+  }
+
+  Tuple *bottom_complication_tuple =
+      dict_find(iterator, MESSAGE_KEY_BOTTOM_COMPLICATION);
+  if (bottom_complication_tuple) {
+    g_settings.bottom_complication =
+        (Complication)atoi(bottom_complication_tuple->value->cstring);
+    dirty = true;
+  }
+
+  Tuple *temperature_unit_tuple =
+      dict_find(iterator, MESSAGE_KEY_TEMPERATURE_UNIT);
+  if (temperature_unit_tuple) {
+    g_settings.temperature_unit =
+        (TemperatureUnit)atoi(temperature_unit_tuple->value->cstring);
+    dirty = true;
+  }
+
+  Tuple *intro_animation_tuple =
+      dict_find(iterator, MESSAGE_KEY_INTRO_ANIMATION);
+  if (intro_animation_tuple) {
+    g_settings.intro_animation = intro_animation_tuple->value->int32 == 1;
     dirty = true;
   }
 
@@ -118,55 +171,15 @@ bool update_settings(DictionaryIterator *iterator, void *context) {
     dirty = true;
   }
 
+  Tuple *bw_stripe_style_tuple =
+      dict_find(iterator, MESSAGE_KEY_BW_STRIPE_STYLE);
+  if (bw_stripe_style_tuple) {
+    // atoi returns 0 on error but that's fine because "0" is our default.
+    g_settings.bw_stripe_style =
+        (BWStripeStyle)atoi(bw_stripe_style_tuple->value->cstring);
+    dirty = true;
+  }
+
   return dirty;
-}
-
-static void prv_from_v2_settings(SettingsV2 v2) {
-  g_settings.top_stripe_color = v2.top_stripe_color;
-  g_settings.bottom_stripe_color = v2.bottom_stripe_color;
-  g_settings.background_color = v2.background_color;
-  g_settings.fill_corners = v2.fill_corners;
-  g_settings.hour_color = v2.hour_color;
-  g_settings.minute_color = v2.minute_color;
-  g_settings.time_format = TIME_FORMAT_SYSTEM;
-  g_settings.show_date = v2.show_date;
-  g_settings.wday_color = v2.wday_color;
-  g_settings.mday_color = v2.mday_color;
-}
-
-static void prv_from_v3_settings(SettingsV3 v3) {
-  g_settings.top_stripe_color = v3.top_stripe_color;
-  g_settings.bottom_stripe_color = v3.bottom_stripe_color;
-  g_settings.background_color = v3.background_color;
-  g_settings.fill_corners = v3.fill_corners;
-  g_settings.hour_color = v3.hour_color;
-  g_settings.minute_color = v3.minute_color;
-  g_settings.time_format =
-      v3.show_24h_time ? TIME_FORMAT_24H : TIME_FORMAT_SYSTEM;
-  g_settings.show_date = v3.show_date;
-  g_settings.wday_color = v3.wday_color;
-  g_settings.mday_color = v3.mday_color;
-}
-
-bool migrate_settings() {
-  SettingsV3 settings_v3;
-  if (persist_read_data(SETTINGS_KEY_V3, &settings_v3, sizeof(settings_v3)) !=
-      E_DOES_NOT_EXIST) {
-    prv_from_v3_settings(settings_v3);
-    persist_write_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
-    persist_delete(SETTINGS_KEY_V3);
-    persist_delete(SETTINGS_KEY_V2);
-    return true;
-  }
-
-  SettingsV2 settings_v2;
-  if (persist_read_data(SETTINGS_KEY_V2, &settings_v2, sizeof(settings_v2)) !=
-      E_DOES_NOT_EXIST) {
-    prv_from_v2_settings(settings_v2);
-    persist_write_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
-    persist_delete(SETTINGS_KEY_V2);
-    return true;
-  }
-
-  return false;
+#endif
 }

@@ -1,53 +1,355 @@
+#include "health.h"
+#include "icons.h"
 #include "settings.h"
+#include "weather.h"
 #include <pebble-fctx/fctx.h>
 #include <pebble-fctx/ffont.h>
 #include <pebble.h>
 #include <time.h>
 
-// -22.5 deg
-#define TEXT_ANGLE (-45 * TRIG_MAX_ANGLE / 720)
-// 67.5 deg
-#define SLANT_ANGLE (TEXT_ANGLE + 90 * TRIG_MAX_ANGLE / 360)
+#ifdef SHOT_CONFIG
+#include "shot_config.h"
+#endif
+
+#define TEXT_ANGLE_DEGREES (-7)
+#define TEXT_ANGLE (TEXT_ANGLE_DEGREES * TRIG_MAX_ANGLE / 360)
+
+// The face arrives rather than appearing, the way the two banners of a fighting
+// game's versus screen do: the top half slides in from the left, a beat at a
+// time -- the complication's rows from the screen edge inwards, then the two
+// digits behind them in quick succession -- and once it has landed the bottom
+// half comes in the same way from the right.
+#define INTRO_ROW_STAGGER_MS 110
+#define INTRO_DIGIT_STAGGER_MS 70
+// How long one element takes to fly in. Longer than the gap between beats, so
+// the elements of a half overlap in the air rather than queueing.
+#define INTRO_TRAVEL_MS 300
+// The pause between the top half landing and the bottom half setting off: the
+// beat that makes it two entrances rather than one gesture. Negative overlaps
+// them instead.
+#define INTRO_HALF_HOLD_MS (-150)
+// The unit an eased beat is measured in. A power of two, since the easing
+// squares and cubes it.
+#define INTRO_SCALE 1024
+// strftime gives %H, %I and %M two characters whatever the hour.
+#define TIME_DIGIT_COUNT 2
 
 static Window *s_window;
 static FFont *s_font;
+static FFont *s_icon_font;
 static Layer *s_time_layer;
 static Layer *s_background_layer;
+static Animation *s_intro_animation;
+static AnimationProgress s_intro_progress;
+static uint32_t s_intro_duration_ms;
+static bool s_intro_running;
 
 static const char *s_wdays[] = {"SUN", "MON", "TUE", "WED",
                                 "THU", "FRI", "SAT"};
+
+static const char *s_months[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                 "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
+// The clock the face draws. A screenshot build draws the one scripts/shots.py
+// pinned instead of the watch's own, so the same shot taken a year from now
+// comes out identical.
+static tm *prv_now() {
+#ifdef SHOT_CONFIG
+  static tm s_shot_time = SHOT_TM;
+  return &s_shot_time;
+#else
+  time_t now = time(NULL);
+  return localtime(&now);
+#endif
+}
+
+// What the watch's own 12/24h setting says, which only matters while the face
+// is set to follow it.
+static bool prv_is_24h_style() {
+#ifdef SHOT_CONFIG
+  return SHOT_24H;
+#else
+  return clock_is_24h_style();
+#endif
+}
+
+// On a one bit screen there is no palette to configure: one stripe is black,
+// the other white, and everything drawn on a stripe is the inverse of it.
+static GColor prv_stripe_color(bool top) {
+#ifdef PBL_BW
+  bool dark = (g_settings.bw_stripe_style == BW_STRIPES_DARK_TOP) == top;
+  return dark ? GColorBlack : GColorWhite;
+#else
+  return top ? g_settings.top_stripe_color : g_settings.bottom_stripe_color;
+#endif
+}
+
+// The uncovered corners are a dithered gray on BW, so the window colour
+// underneath them only ever shows through as the tone the dither starts from.
+static GColor prv_background_color() {
+  return PBL_IF_BW_ELSE(GColorBlack, g_settings.background_color);
+}
+
+static GColor prv_ink_color(bool top, GColor configured) {
+#ifdef PBL_BW
+  return gcolor_equal(prv_stripe_color(top), GColorBlack) ? GColorWhite
+                                                          : GColorBlack;
+#else
+  (void)top;
+  return configured;
+#endif
+}
 
 static int32_t prv_f_time_font_height(GRect bounds) {
   return INT_TO_FIXED(bounds.size.h / 3);
 }
 
+// A one bit screen has no antialiasing to hold a condensed face together, so
+// the date is set taller there -- at a tenth of the screen its counters close
+// up into slits and "09" stops reading as a number.
 static int32_t prv_f_date_font_height(GRect bounds) {
-  return INT_TO_FIXED(bounds.size.h / 10);
+  return INT_TO_FIXED(bounds.size.h / PBL_IF_BW_ELSE(9, 10));
 }
 
 static int32_t prv_f_time_font_radius(GRect bounds) {
   return INT_TO_FIXED(bounds.size.h) / 3 - INT_TO_FIXED(bounds.size.h) / 9;
 }
 
-static int32_t prv_f_date_font_radius(GRect bounds) {
-  return prv_f_time_font_radius(bounds) - prv_f_time_font_height(bounds) / 2 +
-         prv_f_date_font_height(bounds) / 2;
+// Keeps the date and weekday clear of the line where the stripes meet.
+static int32_t prv_f_date_font_padding(GRect bounds) {
+  return prv_f_date_font_height(bounds) / 6;
 }
 
-static int32_t prv_f_date_font_offset(GRect bounds) {
-  return INT_TO_FIXED(bounds.size.h) / 2 - INT_TO_FIXED(bounds.size.h) / 5;
+static int32_t prv_f_date_font_radius(GRect bounds) {
+  return prv_f_time_font_radius(bounds) - prv_f_time_font_height(bounds) / 2 +
+         prv_f_date_font_height(bounds) / 2 + prv_f_date_font_padding(bounds);
+}
+
+// How far the hour and minute are nudged apart along the slant.
+static int32_t prv_f_time_font_offset(GRect bounds) {
+  return prv_f_time_font_height(bounds) / 6;
+}
+
+// Icons carry less detail than a glyph of the same height, so they are set a
+// little larger than the text they sit under.
+static int32_t prv_f_weather_icon_height(GRect bounds) {
+  return prv_f_date_font_height(bounds) * 4 / 3;
+}
+
+// Being the taller of the two, an icon all but fills the line it is given, and
+// lands against the reading above it. This pushes it further out to open a gap.
+static int32_t prv_f_icon_gap(GRect bounds) {
+  return prv_f_date_font_height(bounds) / 3;
+}
+
+static int32_t prv_f_date_line_height(GRect bounds) {
+  return prv_f_date_font_height(bounds) * 4 / 3;
+}
+
+// Tightened on BW to pay for the taller date, which would otherwise push the
+// weekday off the right edge.
+static int32_t prv_f_date_font_gap(GRect bounds) {
+  return prv_f_date_font_height(bounds) / PBL_IF_BW_ELSE(3, 2);
+}
+
+// How far a slanted line drops over a horizontal run of f_run.
+static int32_t prv_f_slant_rise(int32_t f_run) {
+  return -f_run * sin_lookup(TEXT_ANGLE) / cos_lookup(TEXT_ANGLE);
+}
+
+// Thickness of a stripe, measured perpendicular to the slant, so that it
+// always covers the time digits regardless of the slant angle.
+static int32_t prv_f_stripe_thickness(GRect bounds) {
+  return prv_f_time_font_radius(bounds) +
+         prv_f_time_font_height(bounds) * 3 / 4;
+}
+
+static int32_t prv_f_stripe_vertical_thickness(GRect bounds) {
+  return prv_f_stripe_thickness(bounds) * TRIG_MAX_RATIO /
+         cos_lookup(TEXT_ANGLE);
+}
+
+// Positions a point f_radius perpendicular to the slant through the center of
+// the screen, then f_offset along it.
+static FPoint prv_f_slant_point(GRect bounds, int32_t f_radius,
+                                int32_t f_offset) {
+  FPoint f_center =
+      FPoint(INT_TO_FIXED(bounds.size.w / 2), INT_TO_FIXED(bounds.size.h / 2));
+
+  return FPoint(f_center.x + (sin_lookup(TEXT_ANGLE) * f_radius +
+                              cos_lookup(TEXT_ANGLE) * f_offset) /
+                                 TRIG_MAX_RATIO,
+                f_center.y + (sin_lookup(TEXT_ANGLE) * f_offset -
+                              cos_lookup(TEXT_ANGLE) * f_radius) /
+                                 TRIG_MAX_RATIO);
+}
+
+// A point f_offset further along the slant. Moving along the text's own
+// baseline rather than straight across the screen is what keeps an element
+// parallel to the stripe it belongs to as it slides.
+static FPoint prv_f_slide(FPoint f_point, int32_t f_offset) {
+  return FPoint(f_point.x + cos_lookup(TEXT_ANGLE) * f_offset / TRIG_MAX_RATIO,
+                f_point.y + sin_lookup(TEXT_ANGLE) * f_offset / TRIG_MAX_RATIO);
+}
+
+// How many lines a complication puts on screen, and so how many beats its
+// column takes to arrive. Not the same as the number of lines it lays out: the
+// icon line is only drawn where there is a font for it, and a beat spent on a
+// line nobody sees would read as a stumble in the sequence.
+static int prv_complication_entry_count(Complication complication) {
+  switch (complication) {
+  case COMPLICATION_NONE:
+    return 0;
+  case COMPLICATION_WEEKDAY:
+    return 1;
+  case COMPLICATION_DATE:
+    return 2;
+  case COMPLICATION_WEEKDAY_DATE:
+    return 3;
+  case COMPLICATION_WEATHER:
+  case COMPLICATION_STEPS:
+  case COMPLICATION_HEART_RATE:
+    return s_icon_font ? 2 : 1;
+  }
+
+  return 0;
+}
+
+// When a beat starts, in milliseconds from the top of the intro. The
+// complication's rows come first at their own pace, the digits behind them at
+// a quicker one.
+static uint32_t prv_intro_beat_start_ms(int rows, int beat) {
+  if (beat < rows) {
+    return beat * INTRO_ROW_STAGGER_MS;
+  }
+
+  return rows * INTRO_ROW_STAGGER_MS +
+         (beat - rows) * INTRO_DIGIT_STAGGER_MS;
+}
+
+// How long a half takes from its own first beat to its last one landing.
+static uint32_t prv_intro_half_length_ms(int rows) {
+  return prv_intro_beat_start_ms(rows, rows + TIME_DIGIT_COUNT - 1) +
+         INTRO_TRAVEL_MS;
+}
+
+// When a half sets off. The top goes first; the bottom waits for it to land,
+// which is what makes the two read as fighter and challenger rather than as
+// one face sliding apart.
+static uint32_t prv_intro_half_start_ms(bool top) {
+  if (top) {
+    return 0;
+  }
+
+  int32_t start = (int32_t)prv_intro_half_length_ms(prv_complication_entry_count(
+                      g_settings.top_complication)) +
+                  INTRO_HALF_HOLD_MS;
+
+  return start < 0 ? 0 : (uint32_t)start;
+}
+
+#ifndef SHOT_CONFIG
+// How long the whole intro runs: until the later of the two halves has landed.
+// The bottom is normally that, but a hold short enough to overlap the halves
+// can leave a long top column still arriving after a bare bottom one has
+// finished.
+static uint32_t prv_intro_duration_ms() {
+  uint32_t top_end = prv_intro_half_length_ms(
+      prv_complication_entry_count(g_settings.top_complication));
+  uint32_t bottom_end =
+      prv_intro_half_start_ms(false) +
+      prv_intro_half_length_ms(
+          prv_complication_entry_count(g_settings.bottom_complication));
+
+  return bottom_end > top_end ? bottom_end : top_end;
+}
+#endif
+
+// How far along its own slide a beat is: 0 before it starts, INTRO_SCALE once
+// it has landed. Eased so an element decelerates into place rather than
+// stopping dead against it.
+static int32_t prv_intro_beat_progress(bool top, int rows, int beat) {
+  if (!s_intro_running) {
+    return INTRO_SCALE;
+  }
+
+  // Safe in 32 bits for any intro under about half a minute, which is a good
+  // deal longer than one worth watching.
+  int32_t elapsed_ms = (int32_t)s_intro_progress * (int32_t)s_intro_duration_ms /
+                           ANIMATION_NORMALIZED_MAX -
+                       (int32_t)prv_intro_half_start_ms(top) -
+                       (int32_t)prv_intro_beat_start_ms(rows, beat);
+
+  if (elapsed_ms <= 0) {
+    return 0;
+  }
+  if (elapsed_ms >= INTRO_TRAVEL_MS) {
+    return INTRO_SCALE;
+  }
+
+  // Cubic ease out: away quickly, settling in slowly.
+  int32_t left = INTRO_SCALE - elapsed_ms * INTRO_SCALE / INTRO_TRAVEL_MS;
+  return INTRO_SCALE - left * left / INTRO_SCALE * left / INTRO_SCALE;
+}
+
+// How far out along the slant a beat still has to travel, as an offset to add
+// to wherever the element finally sits. A whole screen width, so an element
+// starts clear of the edge whatever its own width.
+//
+// The sign is what makes the two halves mirror each other: negative up top,
+// which is out to the left, and positive below, which is out to the right.
+static int32_t prv_f_intro_offset(GRect bounds, bool top, int rows, int beat) {
+  int32_t progress = prv_intro_beat_progress(top, rows, beat);
+  if (progress >= INTRO_SCALE) {
+    return 0;
+  }
+
+  int32_t f_out = INT_TO_FIXED(bounds.size.w) * (INTRO_SCALE - progress) /
+                  INTRO_SCALE;
+  return top ? -f_out : f_out;
 }
 
 static void prv_f_draw_text(FContext *fctx, FPoint f_center, const char *text,
-                            GColor color) {
+                            FFont *font, GColor color,
+                            GTextAlignment alignment) {
   fctx_set_rotation(fctx, TEXT_ANGLE);
 
   fctx_begin_fill(fctx);
   fctx_set_offset(fctx, f_center);
   fctx_set_fill_color(fctx, color);
-  fctx_draw_string(fctx, text, s_font, GTextAlignmentCenter,
-                   FTextAnchorCapMiddle);
+  fctx_draw_string(fctx, text, font, alignment, FTextAnchorCapMiddle);
   fctx_end_fill(fctx);
+}
+
+// The digits of one number, drawn a glyph at a time so each can arrive on its
+// own beat. They are laid out from the left edge of the whole string by each
+// glyph's own advance, which is where fctx would have put them had it drawn the
+// string in one go -- so a settled face is the same face it always was.
+//
+// The digit that breaks the edge of the screen first enters first, which is the
+// trailing one: sliding in from the left, the right of the two is nearest the
+// screen and arrives ahead of the one behind it, so the hour fills in ones then
+// tens and the minute, coming the other way, tens then ones.
+//
+// That order also keeps the pair apart. Both digits cover the same ground on
+// the same curve, so the one still to arrive is always further out than the one
+// ahead of it; entering them the other way round would have the number closing
+// up on itself in the air and springing open as it landed.
+static void prv_draw_time_digits(FContext *fctx, GRect bounds,
+                                 const char *digits, FPoint f_center,
+                                 GColor color, bool top, int rows) {
+  int count = strlen(digits);
+  int32_t f_pen = -fctx_string_width(fctx, digits, s_font) / 2;
+
+  for (int digit = 0; digit < count; digit++) {
+    char glyph[2] = {digits[digit], '\0'};
+    int beat = rows + (top ? count - 1 - digit : digit);
+    int32_t f_intro = prv_f_intro_offset(bounds, top, rows, beat);
+
+    prv_f_draw_text(fctx, prv_f_slide(f_center, f_pen + f_intro), glyph, s_font,
+                    color, GTextAlignmentLeft);
+    f_pen += fctx_string_width(fctx, glyph, s_font);
+  }
 }
 
 static void prv_draw_time(Layer *layer, GContext *ctx, tm *time) {
@@ -59,65 +361,167 @@ static void prv_draw_time(Layer *layer, GContext *ctx, tm *time) {
                            FIXED_TO_INT(prv_f_time_font_height(bounds)));
 
   int32_t f_radius = prv_f_time_font_radius(bounds);
+  int32_t f_offset = prv_f_time_font_offset(bounds);
 
-  FPoint f_center =
-      FPoint(INT_TO_FIXED(bounds.size.w / 2), INT_TO_FIXED(bounds.size.h / 2));
-
-  FPoint f_hour_center =
-      FPoint(f_center.x + sin_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO,
-             f_center.y - cos_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO);
-
-  FPoint f_min_center =
-      FPoint(f_center.x - sin_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO,
-             f_center.y + cos_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO);
+  FPoint f_hour_center = prv_f_slant_point(bounds, f_radius, -f_offset);
+  FPoint f_min_center = prv_f_slant_point(bounds, -f_radius, f_offset);
 
   static char s_hour_buffer[3];
   static char s_min_buffer[3];
-  bool use_24h = g_settings.time_format == TIME_FORMAT_24H ||
-                 (g_settings.time_format == TIME_FORMAT_SYSTEM &&
-                  clock_is_24h_style());
+  bool use_24h =
+      g_settings.time_format == TIME_FORMAT_24H ||
+      (g_settings.time_format == TIME_FORMAT_SYSTEM && prv_is_24h_style());
   strftime(s_hour_buffer, sizeof(s_hour_buffer), use_24h ? "%H" : "%I", time);
   strftime(s_min_buffer, sizeof(s_min_buffer), "%M", time);
 
-  prv_f_draw_text(&fctx, f_hour_center, s_hour_buffer, g_settings.hour_color);
-  prv_f_draw_text(&fctx, f_min_center, s_min_buffer, g_settings.minute_color);
+  prv_draw_time_digits(&fctx, bounds, s_hour_buffer, f_hour_center,
+                       prv_ink_color(true, g_settings.hour_color), true,
+                       prv_complication_entry_count(g_settings.top_complication));
+  prv_draw_time_digits(&fctx, bounds, s_min_buffer, f_min_center,
+                       prv_ink_color(false, g_settings.minute_color), false,
+                       prv_complication_entry_count(g_settings.bottom_complication));
 
   fctx_deinit_context(&fctx);
 }
 
-static void prv_draw_date(Layer *layer, GContext *ctx, tm *time) {
+// How far the side columns sit off the centre: clear of the time digits, which
+// are the widest thing they have to stay out of the way of.
+static int32_t prv_f_side_column_offset(FContext *fctx, GRect bounds) {
+  fctx_set_text_cap_height(fctx, s_font,
+                           FIXED_TO_INT(prv_f_time_font_height(bounds)));
+  int32_t f_time_half_width = fctx_string_width(fctx, "00", s_font) / 2;
+
+  return f_time_half_width + prv_f_date_font_gap(bounds) -
+         prv_f_time_font_offset(bounds);
+}
+
+#define COMPLICATION_MAX_LINES 3
+
+// The first line sits innermost, tucked against the time digits, and the rest
+// stack outwards from it. So a column reads downwards in the bottom half and
+// upwards in the top one, which is what puts the narrowest line -- the day of
+// the month, or the weather icon -- furthest from the centre. That is where a
+// round screen has the least width to give, and where a wide reading like
+// "-22°" would otherwise run off the edge.
+static FPoint prv_f_complication_point(GRect bounds, int32_t f_offset, bool top,
+                                       int line, int32_t f_line_height,
+                                       int32_t f_extra, int32_t f_intro) {
+  int32_t f_radius =
+      prv_f_date_font_radius(bounds) + line * f_line_height + f_extra;
+
+  return prv_f_slant_point(bounds, top ? f_radius : -f_radius,
+                           (top ? f_offset : -f_offset) + f_intro);
+}
+
+// Three lines will not fit the corner at the size one or two do -- the outer
+// one would climb past the top of the hour and out of the stripe. Most of what
+// has to be given back is taken out of the leading rather than the type, since
+// a one bit screen has no antialiasing and the glyphs are the part that stops
+// reading first: an eighth off the cap height and a sixth off the line lands
+// the top line level with the top of the hour on every platform.
+static int32_t prv_f_complication_text_height(GRect bounds, int count) {
+  int32_t f_height = prv_f_date_font_height(bounds);
+
+  return count < COMPLICATION_MAX_LINES ? f_height : f_height * 7 / 8;
+}
+
+static int32_t prv_f_complication_line_height(GRect bounds, int count) {
+  if (count < COMPLICATION_MAX_LINES) {
+    return prv_f_date_line_height(bounds);
+  }
+
+  return prv_f_complication_text_height(bounds, count) * 7 / 6;
+}
+
+static void prv_draw_complication(Layer *layer, GContext *ctx, tm *time,
+                                  bool top) {
+  Complication complication =
+      top ? g_settings.top_complication : g_settings.bottom_complication;
+  if (complication == COMPLICATION_NONE) {
+    return;
+  }
+
   FContext fctx;
   GRect bounds = layer_get_unobstructed_bounds(layer);
   fctx_init_context(&fctx, ctx);
 
-  fctx_set_text_cap_height(&fctx, s_font,
-                           FIXED_TO_INT(prv_f_date_font_height(bounds)));
-
-  int32_t f_radius = prv_f_date_font_radius(bounds);
-  int32_t f_offset = prv_f_date_font_offset(bounds);
-  int32_t perp_angle = TEXT_ANGLE + TRIG_MAX_ANGLE * 90 / 360;
-
-  FPoint f_center =
-      FPoint(INT_TO_FIXED(bounds.size.w / 2), INT_TO_FIXED(bounds.size.h / 2));
-
-  FPoint f_wday_center =
-      FPoint(f_center.x + sin_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO -
-                 sin_lookup(perp_angle) * f_offset / TRIG_MAX_RATIO,
-             f_center.y - cos_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO +
-                 cos_lookup(perp_angle) * f_offset / TRIG_MAX_RATIO);
-
-  FPoint f_mday_center =
-      FPoint(f_center.x - sin_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO +
-                 sin_lookup(perp_angle) * f_offset / TRIG_MAX_RATIO,
-             f_center.y + cos_lookup(TEXT_ANGLE) * f_radius / TRIG_MAX_RATIO -
-                 cos_lookup(perp_angle) * f_offset / TRIG_MAX_RATIO);
-
   static char s_mday_buffer[3];
-  strftime(s_mday_buffer, sizeof(s_mday_buffer), "%d", time);
+  static char s_reading_buffer[8];
 
-  prv_f_draw_text(&fctx, f_wday_center, s_wdays[time->tm_wday],
-                  g_settings.wday_color);
-  prv_f_draw_text(&fctx, f_mday_center, s_mday_buffer, g_settings.mday_color);
+  const char *lines[COMPLICATION_MAX_LINES] = {NULL};
+  int count = 0;
+  // Only ever the last line, and only where a complication has one.
+  bool ends_with_icon = false;
+
+  switch (complication) {
+  case COMPLICATION_WEATHER:
+    weather_temperature_string(s_reading_buffer, sizeof(s_reading_buffer));
+    lines[count++] = s_reading_buffer;
+    lines[count++] = weather_icon();
+    ends_with_icon = true;
+    break;
+  case COMPLICATION_STEPS:
+    health_steps_string(s_reading_buffer, sizeof(s_reading_buffer));
+    lines[count++] = s_reading_buffer;
+    lines[count++] = ICON_STEPS;
+    ends_with_icon = true;
+    break;
+  case COMPLICATION_HEART_RATE:
+    health_heart_rate_string(s_reading_buffer, sizeof(s_reading_buffer));
+    lines[count++] = s_reading_buffer;
+    lines[count++] = ICON_FAVORITE;
+    ends_with_icon = true;
+    break;
+  case COMPLICATION_WEEKDAY_DATE:
+    lines[count++] = s_wdays[time->tm_wday];
+    // fall through
+  case COMPLICATION_DATE:
+    strftime(s_mday_buffer, sizeof(s_mday_buffer), "%d", time);
+    lines[count++] = s_months[time->tm_mon];
+    lines[count++] = s_mday_buffer;
+    break;
+  case COMPLICATION_WEEKDAY:
+    lines[count++] = s_wdays[time->tm_wday];
+    break;
+  case COMPLICATION_NONE:
+    break;
+  }
+
+  int32_t f_offset = prv_f_side_column_offset(&fctx, bounds);
+  int32_t f_line_height = prv_f_complication_line_height(bounds, count);
+  GColor color =
+      prv_ink_color(top, top ? g_settings.wday_color : g_settings.mday_color);
+  GTextAlignment alignment = top ? GTextAlignmentLeft : GTextAlignmentRight;
+
+  fctx_set_text_cap_height(
+      &fctx, s_font,
+      FIXED_TO_INT(prv_f_complication_text_height(bounds, count)));
+
+  // The outermost line enters first and the sequence works inwards, so a
+  // column arrives from the edge of the screen towards the time rather than
+  // growing out of it. Both halves read the same way round, which is what makes
+  // them mirror each other.
+  int rows = prv_complication_entry_count(complication);
+
+  for (int line = 0; line < count; line++) {
+    bool is_icon = ends_with_icon && line == count - 1;
+    if (is_icon && !s_icon_font) {
+      continue;
+    }
+
+    FPoint f_point = prv_f_complication_point(
+        bounds, f_offset, top, line, f_line_height,
+        is_icon ? prv_f_icon_gap(bounds) : 0,
+        prv_f_intro_offset(bounds, top, rows, rows - 1 - line));
+    if (!is_icon) {
+      prv_f_draw_text(&fctx, f_point, lines[line], s_font, color, alignment);
+    } else {
+      fctx_set_text_cap_height(&fctx, s_icon_font,
+                               FIXED_TO_INT(prv_f_weather_icon_height(bounds)));
+      prv_f_draw_text(&fctx, f_point, lines[line], s_icon_font, color,
+                      alignment);
+    }
+  }
 
   fctx_deinit_context(&fctx);
 }
@@ -134,16 +538,9 @@ static void prv_draw_background_stripe(Layer *layer, GContext *ctx,
   FPoint f_bounds =
       FPoint(INT_TO_FIXED(bounds.size.w), INT_TO_FIXED(bounds.size.h));
 
-  int32_t f_stripe_width = prv_f_time_font_height(bounds);
-  int32_t f_padding = prv_f_time_font_radius(bounds) - f_stripe_width / 4;
+  int32_t f_stripe_rise = prv_f_slant_rise(f_bounds.x);
 
-  int32_t f_center_to_stripe_bottom_left_offset =
-      f_center.x * cos_lookup(SLANT_ANGLE) / sin_lookup(SLANT_ANGLE);
-
-  int32_t f_stripe_vertical_height =
-      f_bounds.x * cos_lookup(SLANT_ANGLE) / sin_lookup(SLANT_ANGLE);
-
-  int32_t f_height_offset = -f_stripe_vertical_height - f_padding;
+  int32_t f_height_offset = -prv_f_stripe_vertical_thickness(bounds);
   // Hackfix: there is some minor blending that causes a black stripe between
   // two adjacent stripes I've "found that 1/4 of a pixel is enough to hide
   // this.
@@ -153,15 +550,14 @@ static void prv_draw_background_stripe(Layer *layer, GContext *ctx,
     f_aa_hackfix_offset *= -1;
   }
 
-  FPoint lower_left_point =
-      FPoint(0, f_center.y + f_center_to_stripe_bottom_left_offset +
-                    f_aa_hackfix_offset);
+  FPoint lower_left_point = FPoint(
+      0, f_center.y + prv_f_slant_rise(f_center.x) + f_aa_hackfix_offset);
 
   FPoint upper_left_point =
       FPoint(0, lower_left_point.y + f_height_offset + f_aa_hackfix_offset);
 
   FPoint lower_right_point =
-      FPoint(f_bounds.x, lower_left_point.y - f_stripe_vertical_height);
+      FPoint(f_bounds.x, lower_left_point.y - f_stripe_rise);
 
   FPoint upper_right_point =
       FPoint(f_bounds.x, lower_right_point.y + f_height_offset);
@@ -186,40 +582,149 @@ static void prv_draw_background_stripe(Layer *layer, GContext *ctx,
   fctx_deinit_context(&fctx);
 }
 
+#ifdef PBL_BW
+// The uncovered corners have to sit apart from both stripes, and a one bit
+// screen has no third tone -- so a checkerboard stands in for one. Written
+// straight into the frame buffer because fctx has no pattern fill.
+static void prv_fill_dithered_gray(GContext *ctx) {
+  GBitmap *frame_buffer =
+      graphics_capture_frame_buffer_format(ctx, GBitmapFormat1Bit);
+  if (!frame_buffer) {
+    return;
+  }
+
+  GRect fb_bounds = gbitmap_get_bounds(frame_buffer);
+  for (int y = fb_bounds.origin.y; y < fb_bounds.origin.y + fb_bounds.size.h;
+       y++) {
+    GBitmapDataRowInfo row = gbitmap_get_data_row_info(frame_buffer, y);
+    for (int x = row.min_x; x <= row.max_x; x++) {
+      uint8_t mask = 1 << (x % 8);
+      if ((x + y) % 2 == 0) {
+        row.data[x / 8] |= mask;
+      } else {
+        row.data[x / 8] &= ~mask;
+      }
+    }
+  }
+
+  graphics_release_frame_buffer(ctx, frame_buffer);
+}
+#endif
+
 static void prv_draw_background_layer(Layer *layer, GContext *ctx) {
-  prv_draw_background_stripe(layer, ctx, g_settings.top_stripe_color, false);
-  prv_draw_background_stripe(layer, ctx, g_settings.bottom_stripe_color, true);
+#ifdef PBL_BW
+  prv_fill_dithered_gray(ctx);
+#endif
+  prv_draw_background_stripe(layer, ctx, prv_stripe_color(true), false);
+  prv_draw_background_stripe(layer, ctx, prv_stripe_color(false), true);
 }
 
 static void prv_draw_time_layer(Layer *layer, GContext *ctx) {
-  time_t now = time(NULL);
-  struct tm *time = localtime(&now);
+  tm *time = prv_now();
 
   prv_draw_time(layer, ctx, time);
-  if (g_settings.show_date) {
-    prv_draw_date(layer, ctx, time);
-  }
+  prv_draw_complication(layer, ctx, time, true);
+  prv_draw_complication(layer, ctx, time, false);
 }
 
 static void prv_tick_handler(tm *_tick_time, TimeUnits _units_changed) {
+  if (settings_want_weather()) {
+    weather_refresh_if_due();
+  }
   layer_mark_dirty(s_time_layer);
 }
 
 static void prv_invalidate_layers() {
-  window_set_background_color(s_window, g_settings.background_color);
+  window_set_background_color(s_window, prv_background_color());
   layer_mark_dirty(s_time_layer);
   layer_mark_dirty(s_background_layer);
 }
 
+#ifdef SHOT_CONFIG
+// A screenshot should not have to race a timer to catch the settled face, so a
+// shot build never starts one: s_intro_running stays false, every beat reads as
+// landed, and the face draws where it comes to rest.
+static void prv_play_intro() {}
+#else
+static void prv_intro_update(Animation *animation,
+                             const AnimationProgress progress) {
+  s_intro_progress = progress;
+  // Only the text moves; the stripes underneath it are already where they
+  // belong.
+  layer_mark_dirty(s_time_layer);
+}
+
+static void prv_intro_stopped(Animation *animation, bool finished,
+                              void *context) {
+  s_intro_running = false;
+  // The animation destroys itself from here, so nothing outside may hold on
+  // to it past this point.
+  s_intro_animation = NULL;
+  layer_mark_dirty(s_time_layer);
+}
+
+static const AnimationImplementation s_intro_implementation = {
+    .update = prv_intro_update,
+};
+
+static void prv_play_intro() {
+  if (!g_settings.intro_animation) {
+    return;
+  }
+
+  s_intro_duration_ms = prv_intro_duration_ms();
+  s_intro_progress = 0;
+  s_intro_running = true;
+
+  s_intro_animation = animation_create();
+  animation_set_implementation(s_intro_animation, &s_intro_implementation);
+  animation_set_duration(s_intro_animation, s_intro_duration_ms);
+  // Each beat eases itself; easing the whole run as well would bunch them up.
+  animation_set_curve(s_intro_animation, AnimationCurveLinear);
+  animation_set_handlers(
+      s_intro_animation, (AnimationHandlers){.stopped = prv_intro_stopped},
+      NULL);
+  animation_schedule(s_intro_animation);
+}
+#endif
+
 static void prv_window_load(Window *window) {
   layer_set_update_proc(s_time_layer, prv_draw_time_layer);
   layer_set_update_proc(s_background_layer, prv_draw_background_layer);
+  prv_play_intro();
 }
 
 static void prv_window_unload(Window *window) {
+  if (s_intro_animation) {
+    animation_unschedule(s_intro_animation);
+  }
   layer_destroy(s_time_layer);
   layer_destroy(s_background_layer);
   ffont_destroy(s_font);
+  if (s_icon_font) {
+    ffont_destroy(s_icon_font);
+  }
+}
+
+// Aplite never gets the icon font. It has 24K of app RAM, of which the time
+// font takes 4.4K and fctx's rasterisation buffers about 3K, leaving too little
+// for a 7K icon font -- fctx fails to allocate its flag buffer and the app
+// faults. So the font is left out of aplite's bundle entirely and its
+// complications draw their reading without an icon above it. Everywhere else it
+// is loaded only while a complication is actually drawing icons out of it,
+// which is still worth doing on the 64K platforms.
+static void prv_sync_icon_font() {
+#if defined(PBL_PLATFORM_APLITE)
+  return;
+#else
+  bool wanted = settings_want_icons();
+  if (wanted && !s_icon_font) {
+    s_icon_font = ffont_create_from_resource(RESOURCE_ID_ICONFONT);
+  } else if (!wanted && s_icon_font) {
+    ffont_destroy(s_icon_font);
+    s_icon_font = NULL;
+  }
+#endif
 }
 
 static void prv_save_settings() {
@@ -228,17 +733,29 @@ static void prv_save_settings() {
 
 static void prv_load_settings() {
   default_settings();
-  if (!migrate_settings()) {
-    persist_read_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
-  }
+#ifndef SHOT_CONFIG
+  // Leaves the defaults standing until something has been saved.
+  persist_read_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
+#endif
 }
 
 static void prv_inbox_received_callback(DictionaryIterator *iterator,
                                         void *context) {
+  bool weather_dirty = weather_update(iterator);
 
-  bool dirty = update_settings(iterator, context);
-  if (dirty) {
+  bool wanted_weather = settings_want_weather();
+  bool settings_dirty = update_settings(iterator, context);
+  if (settings_dirty) {
     prv_save_settings();
+    prv_sync_icon_font();
+    // Turning a weather complication on should not leave it blank until the
+    // next refresh comes round.
+    if (!wanted_weather && settings_want_weather()) {
+      weather_refresh();
+    }
+  }
+
+  if (settings_dirty || weather_dirty) {
     prv_invalidate_layers();
   }
 }
@@ -258,10 +775,11 @@ static void prv_unobstructed_did_change_callback(void *context) {
 
 static void prv_init(void) {
   prv_load_settings();
+  weather_init();
 
   app_message_register_inbox_received(prv_inbox_received_callback);
 
-  app_message_open(256, 0);
+  app_message_open(256, 64);
 
   s_window = window_create();
   window_set_window_handlers(s_window, (WindowHandlers){
@@ -270,6 +788,7 @@ static void prv_init(void) {
                                        });
 
   s_font = ffont_create_from_resource(RESOURCE_ID_TIMEFONT);
+  prv_sync_icon_font();
 
   Layer *window_layer = window_get_root_layer(s_window);
   GRect bounds = layer_get_bounds(window_layer);
@@ -280,15 +799,20 @@ static void prv_init(void) {
   s_time_layer = layer_create(bounds);
   layer_add_child(window_layer, s_time_layer);
 
-  window_set_background_color(s_window, g_settings.background_color);
+  window_set_background_color(s_window, prv_background_color());
 
-  UnobstructedAreaHandlers handlers = {
+  // Aplite compiles the subscription away, which leaves this unreferenced.
+  UnobstructedAreaHandlers handlers __attribute__((unused)) = {
       .will_change = prv_unobstructed_will_change_callback,
       .change = prv_unobstructed_change_callback,
       .did_change = prv_unobstructed_did_change_callback};
   unobstructed_area_service_subscribe(handlers, NULL);
 
   tick_timer_service_subscribe(MINUTE_UNIT, prv_tick_handler);
+
+  if (settings_want_weather()) {
+    weather_refresh();
+  }
 
   const bool animated = true;
   window_stack_push(s_window, animated);

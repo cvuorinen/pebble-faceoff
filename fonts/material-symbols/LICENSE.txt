@@ -1,0 +1,11 @@
+Material Symbols
+https://github.com/google/material-design-icons
+
+Copyright Google, licensed under the Apache License, Version 2.0:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+The SVGs here are the "outlined" variant, taken one icon at a time rather than
+as the whole font, and are the source for the Material glyphs in
+resources/Icons.ffont. Which ones are present is decided by
+fonts/icons.list.

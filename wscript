@@ -26,6 +26,13 @@ def configure(ctx):
 def build(ctx):
     ctx.load('pebble_sdk')
 
+    # scripts/shots.py sets SHOT_CONFIG so the face builds against the generated
+    # src/c/shot_config.h instead of live settings, the live clock and whatever
+    # the emulator has to say about the weather and the wearer.
+    if os.environ.get('SHOT_CONFIG'):
+        for env in ctx.all_envs.values():
+            env.append_value('DEFINES', 'SHOT_CONFIG')
+
     build_worker = os.path.exists('worker_src')
     binaries = []
 

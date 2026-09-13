@@ -3,13 +3,42 @@
 
 #include <pebble.h>
 
-#define SETTINGS_KEY 4
+// The one key the settings have ever been saved under. There is no migration
+// because there has never been anything to migrate from: the watchface has a
+// UUID of its own, and a watch sandboxes an app's persistent storage by UUID,
+// so the store starts empty everywhere. Changing the struct after the first
+// release does need one -- save under a new key and read the old one once.
+#define SETTINGS_KEY 1
 
 typedef enum {
   TIME_FORMAT_SYSTEM = 0,
   TIME_FORMAT_12H = 1,
   TIME_FORMAT_24H = 2,
 } TimeFormat;
+
+// Black and white watches get no palette at all; the only choice is which end
+// of the face carries the dark stripe. The other stripe is light, and the text
+// on each stripe is the inverse of it.
+typedef enum {
+  BW_STRIPES_DARK_TOP = 0,
+  BW_STRIPES_LIGHT_TOP = 1,
+} BWStripeStyle;
+
+// What either of the two side columns shows, in one, two or three lines.
+typedef enum {
+  COMPLICATION_NONE = 0,
+  COMPLICATION_WEATHER = 1,
+  COMPLICATION_WEEKDAY = 2,
+  COMPLICATION_DATE = 3,
+  COMPLICATION_WEEKDAY_DATE = 4,
+  COMPLICATION_STEPS = 5,
+  COMPLICATION_HEART_RATE = 6,
+} Complication;
+
+typedef enum {
+  TEMPERATURE_UNIT_CELSIUS = 0,
+  TEMPERATURE_UNIT_FAHRENHEIT = 1,
+} TemperatureUnit;
 
 typedef struct Settings {
   GColor top_stripe_color;
@@ -19,15 +48,26 @@ typedef struct Settings {
   GColor hour_color;
   GColor minute_color;
   TimeFormat time_format;
-  bool show_date;
   GColor wday_color;
   GColor mday_color;
+  BWStripeStyle bw_stripe_style;
+  Complication top_complication;
+  Complication bottom_complication;
+  TemperatureUnit temperature_unit;
+  bool intro_animation;
 } Settings;
 
 extern Settings g_settings;
 
+// True when a change means the weather reading should be chased up now rather
+// than at the next refresh.
+bool settings_want_weather();
+
+// True when either column draws something out of the icon font, which decides
+// whether that font is worth keeping in memory.
+bool settings_want_icons();
+
 void default_settings();
 bool update_settings(DictionaryIterator *iterator, void *context);
-bool migrate_settings();
 
 #endif

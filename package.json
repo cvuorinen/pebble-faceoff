@@ -1,9 +1,9 @@
 {
-  "name": "faceoff",
-  "author": "ollien",
-  "version": "1.3.0",
+  "name": "faceoff-remix",
+  "author": "cvuorinen",
+  "version": "1.0.0",
   "keywords": [
-    "pebble-app"
+    "faceoff", "remix", "versus"
   ],
   "private": true,
   "dependencies": {
@@ -11,14 +11,17 @@
     "pebble-fctx": "^1.6.5"
   },
   "pebble": {
-    "displayName": "Faceoff",
-    "uuid": "b7990d2d-4ea8-4d2c-9b54-603ae7546fee",
+    "displayName": "Faceoff Remix",
+    "uuid": "53658c0d-1ada-4069-98df-7342270a2b50",
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
+      "aplite",
       "basalt",
       "chalk",
+      "diorite",
       "emery",
+      "flint",
       "gabbro"
     ],
     "watchapp": {
@@ -32,9 +35,16 @@
       "HOUR_COLOR",
       "MINUTE_COLOR",
       "TIME_FORMAT",
-      "SHOW_DATE",
       "WDAY_COLOR",
-      "MDAY_COLOR"
+      "MDAY_COLOR",
+      "BW_STRIPE_STYLE",
+      "TOP_COMPLICATION",
+      "BOTTOM_COMPLICATION",
+      "TEMPERATURE_UNIT",
+      "WEATHER_REQUEST",
+      "WEATHER_TEMPERATURE",
+      "WEATHER_CONDITION",
+      "INTRO_ANIMATION"
     ],
     "resources": {
       "media": [
@@ -42,6 +52,19 @@
           "type": "raw",
           "name": "TIMEFONT",
           "file": "BebasNeue-Regular.ffont"
+        },
+        {
+          "type": "raw",
+          "name": "ICONFONT",
+          "file": "Icons.ffont",
+          "targetPlatforms": [
+            "basalt",
+            "chalk",
+            "diorite",
+            "emery",
+            "flint",
+            "gabbro"
+          ]
         },
         {
           "type": "bitmap",
@@ -57,5 +80,9 @@
   },
   "devDependencies": {
     "pebble-fctx-compiler": "^1.2.2"
+  },
+  "scripts": {
+    "compile-font": "npx --no-install fctx-compiler fonts/BebasNeue-Regular.svg -r '[0-9:A-Z\u00b0.-]'",
+    "compile-icon-font": "python3 scripts/build-icon-font.py"
   }
 }
