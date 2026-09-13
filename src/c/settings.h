@@ -3,7 +3,7 @@
 
 #include <pebble.h>
 
-#define SETTINGS_KEY 6
+#define SETTINGS_KEY 7
 
 typedef enum {
   TIME_FORMAT_SYSTEM = 0,
@@ -49,6 +49,7 @@ typedef struct Settings {
   Complication top_complication;
   Complication bottom_complication;
   TemperatureUnit temperature_unit;
+  bool intro_animation;
 } Settings;
 
 extern Settings g_settings;

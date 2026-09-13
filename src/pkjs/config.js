@@ -210,6 +210,25 @@ module.exports = [
 		]
 	},
 	{
+		"type": "section",
+		"items": [
+			{
+				"type": "heading",
+				"defaultValue": "Animation"
+			},
+			{
+				"type": "text",
+				"defaultValue": "The two halves slide in when the watchface opens. Takes effect the next time it does."
+			},
+			{
+				"type": "toggle",
+				"messageKey": "INTRO_ANIMATION",
+				"label": "Slide in on launch",
+				"defaultValue": true
+			}
+		]
+	},
+	{
 		"type": "submit",
 		"defaultValue": "Save Settings"
 	}

@@ -7,10 +7,27 @@
 #include "shot_config.h"
 #endif
 
+#define SETTINGS_KEY_V6 6
 #define SETTINGS_KEY_V5 5
 #define SETTINGS_KEY_V4 4
 #define SETTINGS_KEY_V3 3
 #define SETTINGS_KEY_V2 2
+
+typedef struct SettingsV6 {
+  GColor top_stripe_color;
+  GColor bottom_stripe_color;
+  GColor background_color;
+  bool fill_corners;
+  GColor hour_color;
+  GColor minute_color;
+  TimeFormat time_format;
+  GColor wday_color;
+  GColor mday_color;
+  BWStripeStyle bw_stripe_style;
+  Complication top_complication;
+  Complication bottom_complication;
+  TemperatureUnit temperature_unit;
+} SettingsV6;
 
 typedef struct SettingsV5 {
   GColor top_stripe_color;
@@ -85,6 +102,9 @@ void default_settings() {
   g_settings.top_complication = SHOT_TOP_COMPLICATION;
   g_settings.bottom_complication = SHOT_BOTTOM_COMPLICATION;
   g_settings.temperature_unit = SHOT_TEMPERATURE_UNIT;
+  // A shot never plays the intro anyway -- prv_play_intro is a no-op in a
+  // screenshot build -- but the field is not left to whatever was on the stack.
+  g_settings.intro_animation = false;
 #else
   g_settings.top_stripe_color = GColorJazzberryJam;
   g_settings.bottom_stripe_color = GColorVeryLightBlue;
@@ -99,6 +119,7 @@ void default_settings() {
   g_settings.top_complication = COMPLICATION_WEATHER;
   g_settings.bottom_complication = COMPLICATION_DATE;
   g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
+  g_settings.intro_animation = true;
 #endif
 }
 
@@ -205,6 +226,13 @@ bool update_settings(DictionaryIterator *iterator, void *context) {
     dirty = true;
   }
 
+  Tuple *intro_animation_tuple =
+      dict_find(iterator, MESSAGE_KEY_INTRO_ANIMATION);
+  if (intro_animation_tuple) {
+    g_settings.intro_animation = intro_animation_tuple->value->int32 == 1;
+    dirty = true;
+  }
+
   Tuple *wday_color = dict_find(iterator, MESSAGE_KEY_WDAY_COLOR);
   if (wday_color) {
     g_settings.wday_color = GColorFromHEX(wday_color->value->int32);
@@ -228,6 +256,26 @@ bool update_settings(DictionaryIterator *iterator, void *context) {
 
   return dirty;
 #endif
+}
+
+// Everything up to v7 predates the intro animation, which arrives switched on:
+// it is what a fresh install gets, and an upgrade should look like the version
+// it is upgrading to rather than keeping a setting nobody chose.
+static void prv_from_v6_settings(SettingsV6 v6) {
+  g_settings.top_stripe_color = v6.top_stripe_color;
+  g_settings.bottom_stripe_color = v6.bottom_stripe_color;
+  g_settings.background_color = v6.background_color;
+  g_settings.fill_corners = v6.fill_corners;
+  g_settings.hour_color = v6.hour_color;
+  g_settings.minute_color = v6.minute_color;
+  g_settings.time_format = v6.time_format;
+  g_settings.wday_color = v6.wday_color;
+  g_settings.mday_color = v6.mday_color;
+  g_settings.bw_stripe_style = v6.bw_stripe_style;
+  g_settings.top_complication = v6.top_complication;
+  g_settings.bottom_complication = v6.bottom_complication;
+  g_settings.temperature_unit = v6.temperature_unit;
+  g_settings.intro_animation = true;
 }
 
 static void prv_from_v4_settings(SettingsV4 v4) {
@@ -307,6 +355,19 @@ static void prv_from_v3_settings(SettingsV3 v3) {
 }
 
 bool migrate_settings() {
+  SettingsV6 settings_v6;
+  if (persist_read_data(SETTINGS_KEY_V6, &settings_v6, sizeof(settings_v6)) !=
+      E_DOES_NOT_EXIST) {
+    prv_from_v6_settings(settings_v6);
+    persist_write_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
+    persist_delete(SETTINGS_KEY_V6);
+    persist_delete(SETTINGS_KEY_V5);
+    persist_delete(SETTINGS_KEY_V4);
+    persist_delete(SETTINGS_KEY_V3);
+    persist_delete(SETTINGS_KEY_V2);
+    return true;
+  }
+
   SettingsV5 settings_v5;
   if (persist_read_data(SETTINGS_KEY_V5, &settings_v5, sizeof(settings_v5)) !=
       E_DOES_NOT_EXIST) {
