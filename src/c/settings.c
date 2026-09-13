@@ -7,41 +7,9 @@
 #include "shot_config.h"
 #endif
 
-#define SETTINGS_KEY_V6 6
-#define SETTINGS_KEY_V5 5
 #define SETTINGS_KEY_V4 4
 #define SETTINGS_KEY_V3 3
 #define SETTINGS_KEY_V2 2
-
-typedef struct SettingsV6 {
-  GColor top_stripe_color;
-  GColor bottom_stripe_color;
-  GColor background_color;
-  bool fill_corners;
-  GColor hour_color;
-  GColor minute_color;
-  TimeFormat time_format;
-  GColor wday_color;
-  GColor mday_color;
-  BWStripeStyle bw_stripe_style;
-  Complication top_complication;
-  Complication bottom_complication;
-  TemperatureUnit temperature_unit;
-} SettingsV6;
-
-typedef struct SettingsV5 {
-  GColor top_stripe_color;
-  GColor bottom_stripe_color;
-  GColor background_color;
-  bool fill_corners;
-  GColor hour_color;
-  GColor minute_color;
-  TimeFormat time_format;
-  bool show_date;
-  GColor wday_color;
-  GColor mday_color;
-  BWStripeStyle bw_stripe_style;
-} SettingsV5;
 
 typedef struct SettingsV4 {
   GColor top_stripe_color;
@@ -258,26 +226,11 @@ bool update_settings(DictionaryIterator *iterator, void *context) {
 #endif
 }
 
-// Everything up to v7 predates the intro animation, which arrives switched on:
-// it is what a fresh install gets, and an upgrade should look like the version
-// it is upgrading to rather than keeping a setting nobody chose.
-static void prv_from_v6_settings(SettingsV6 v6) {
-  g_settings.top_stripe_color = v6.top_stripe_color;
-  g_settings.bottom_stripe_color = v6.bottom_stripe_color;
-  g_settings.background_color = v6.background_color;
-  g_settings.fill_corners = v6.fill_corners;
-  g_settings.hour_color = v6.hour_color;
-  g_settings.minute_color = v6.minute_color;
-  g_settings.time_format = v6.time_format;
-  g_settings.wday_color = v6.wday_color;
-  g_settings.mday_color = v6.mday_color;
-  g_settings.bw_stripe_style = v6.bw_stripe_style;
-  g_settings.top_complication = v6.top_complication;
-  g_settings.bottom_complication = v6.bottom_complication;
-  g_settings.temperature_unit = v6.temperature_unit;
-  g_settings.intro_animation = true;
-}
-
+// Every published version had a weekday in the top column and a show_date
+// toggle for the bottom one. The nearest thing now is a weekday complication up
+// top and the date below, kept or cleared as show_date had it. The intro
+// animation arrives switched on: it is what a fresh install gets, and an
+// upgrade should look like the version it is upgrading to.
 static void prv_from_v4_settings(SettingsV4 v4) {
   g_settings.top_stripe_color = v4.top_stripe_color;
   g_settings.bottom_stripe_color = v4.bottom_stripe_color;
@@ -294,27 +247,7 @@ static void prv_from_v4_settings(SettingsV4 v4) {
   g_settings.bottom_complication =
       v4.show_date ? COMPLICATION_DATE : COMPLICATION_NONE;
   g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
-}
-
-// Everything before v6 had a weekday in the top column and a show_date toggle
-// for the bottom one. The nearest thing now is a weekday complication up top
-// and the date below, kept or cleared as show_date had it.
-static void prv_from_v5_settings(SettingsV5 v5) {
-  g_settings.top_stripe_color = v5.top_stripe_color;
-  g_settings.bottom_stripe_color = v5.bottom_stripe_color;
-  g_settings.background_color = v5.background_color;
-  g_settings.fill_corners = v5.fill_corners;
-  g_settings.hour_color = v5.hour_color;
-  g_settings.minute_color = v5.minute_color;
-  g_settings.time_format = v5.time_format;
-  g_settings.wday_color = v5.wday_color;
-  g_settings.mday_color = v5.mday_color;
-  g_settings.bw_stripe_style = v5.bw_stripe_style;
-  g_settings.top_complication =
-      v5.show_date ? COMPLICATION_WEEKDAY : COMPLICATION_NONE;
-  g_settings.bottom_complication =
-      v5.show_date ? COMPLICATION_DATE : COMPLICATION_NONE;
-  g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
+  g_settings.intro_animation = true;
 }
 
 static void prv_from_v2_settings(SettingsV2 v2) {
@@ -333,6 +266,7 @@ static void prv_from_v2_settings(SettingsV2 v2) {
   g_settings.bottom_complication =
       v2.show_date ? COMPLICATION_DATE : COMPLICATION_NONE;
   g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
+  g_settings.intro_animation = true;
 }
 
 static void prv_from_v3_settings(SettingsV3 v3) {
@@ -352,34 +286,10 @@ static void prv_from_v3_settings(SettingsV3 v3) {
   g_settings.bottom_complication =
       v3.show_date ? COMPLICATION_DATE : COMPLICATION_NONE;
   g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
+  g_settings.intro_animation = true;
 }
 
 bool migrate_settings() {
-  SettingsV6 settings_v6;
-  if (persist_read_data(SETTINGS_KEY_V6, &settings_v6, sizeof(settings_v6)) !=
-      E_DOES_NOT_EXIST) {
-    prv_from_v6_settings(settings_v6);
-    persist_write_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
-    persist_delete(SETTINGS_KEY_V6);
-    persist_delete(SETTINGS_KEY_V5);
-    persist_delete(SETTINGS_KEY_V4);
-    persist_delete(SETTINGS_KEY_V3);
-    persist_delete(SETTINGS_KEY_V2);
-    return true;
-  }
-
-  SettingsV5 settings_v5;
-  if (persist_read_data(SETTINGS_KEY_V5, &settings_v5, sizeof(settings_v5)) !=
-      E_DOES_NOT_EXIST) {
-    prv_from_v5_settings(settings_v5);
-    persist_write_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
-    persist_delete(SETTINGS_KEY_V5);
-    persist_delete(SETTINGS_KEY_V4);
-    persist_delete(SETTINGS_KEY_V3);
-    persist_delete(SETTINGS_KEY_V2);
-    return true;
-  }
-
   SettingsV4 settings_v4;
   if (persist_read_data(SETTINGS_KEY_V4, &settings_v4, sizeof(settings_v4)) !=
       E_DOES_NOT_EXIST) {

@@ -3,7 +3,7 @@
 
 #include <pebble.h>
 
-#define SETTINGS_KEY 7
+#define SETTINGS_KEY 5
 
 typedef enum {
   TIME_FORMAT_SYSTEM = 0,

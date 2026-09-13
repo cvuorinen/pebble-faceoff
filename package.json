@@ -1,9 +1,9 @@
 {
-  "name": "faceoff",
-  "author": "ollien",
-  "version": "1.3.0",
+  "name": "faceoff-remix",
+  "author": "cvuorinen",
+  "version": "1.0.0",
   "keywords": [
-    "pebble-app"
+    "faceoff", "remix", "versus"
   ],
   "private": true,
   "dependencies": {
@@ -11,7 +11,7 @@
     "pebble-fctx": "^1.6.5"
   },
   "pebble": {
-    "displayName": "Faceoff",
+    "displayName": "Faceoff Remix",
     "uuid": "b7990d2d-4ea8-4d2c-9b54-603ae7546fee",
     "sdkVersion": "3",
     "enableMultiJS": true,
