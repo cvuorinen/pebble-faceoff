@@ -22,3 +22,8 @@ compile_font: install_deps
 compile_icon_font: install_deps
 	# Build the icon font from the sets listed in fonts/icons.list
 	python3 scripts/build-icon-font.py
+
+# Store screenshots, every platform crossed with its own preset list. Leaves
+# build/ holding a screenshot build, so `just build` before installing for real.
+shots *ARGS: install_deps
+	python3 scripts/shots.py {{ARGS}}

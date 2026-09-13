@@ -7,6 +7,10 @@
 #include <pebble.h>
 #include <time.h>
 
+#ifdef SHOT_CONFIG
+#include "shot_config.h"
+#endif
+
 #define TEXT_ANGLE_DEGREES (-7)
 #define TEXT_ANGLE (TEXT_ANGLE_DEGREES * TRIG_MAX_ANGLE / 360)
 
@@ -21,6 +25,29 @@ static const char *s_wdays[] = {"SUN", "MON", "TUE", "WED",
 
 static const char *s_months[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
                                  "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
+// The clock the face draws. A screenshot build draws the one scripts/shots.py
+// pinned instead of the watch's own, so the same shot taken a year from now
+// comes out identical.
+static tm *prv_now() {
+#ifdef SHOT_CONFIG
+  static tm s_shot_time = SHOT_TM;
+  return &s_shot_time;
+#else
+  time_t now = time(NULL);
+  return localtime(&now);
+#endif
+}
+
+// What the watch's own 12/24h setting says, which only matters while the face
+// is set to follow it.
+static bool prv_is_24h_style() {
+#ifdef SHOT_CONFIG
+  return SHOT_24H;
+#else
+  return clock_is_24h_style();
+#endif
+}
 
 // On a one bit screen there is no palette to configure: one stripe is black,
 // the other white, and everything drawn on a stripe is the inverse of it.
@@ -163,7 +190,7 @@ static void prv_draw_time(Layer *layer, GContext *ctx, tm *time) {
   static char s_min_buffer[3];
   bool use_24h =
       g_settings.time_format == TIME_FORMAT_24H ||
-      (g_settings.time_format == TIME_FORMAT_SYSTEM && clock_is_24h_style());
+      (g_settings.time_format == TIME_FORMAT_SYSTEM && prv_is_24h_style());
   strftime(s_hour_buffer, sizeof(s_hour_buffer), use_24h ? "%H" : "%I", time);
   strftime(s_min_buffer, sizeof(s_min_buffer), "%M", time);
 
@@ -402,8 +429,7 @@ static void prv_draw_background_layer(Layer *layer, GContext *ctx) {
 }
 
 static void prv_draw_time_layer(Layer *layer, GContext *ctx) {
-  time_t now = time(NULL);
-  struct tm *time = localtime(&now);
+  tm *time = prv_now();
 
   prv_draw_time(layer, ctx, time);
   prv_draw_complication(layer, ctx, time, true);
@@ -464,9 +490,11 @@ static void prv_save_settings() {
 
 static void prv_load_settings() {
   default_settings();
+#ifndef SHOT_CONFIG
   if (!migrate_settings()) {
     persist_read_data(SETTINGS_KEY, &g_settings, sizeof(g_settings));
   }
+#endif
 }
 
 static void prv_inbox_received_callback(DictionaryIterator *iterator,

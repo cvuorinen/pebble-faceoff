@@ -3,6 +3,10 @@
 #include "message_keys.auto.h"
 #include "pebble.h"
 
+#ifdef SHOT_CONFIG
+#include "shot_config.h"
+#endif
+
 #define SETTINGS_KEY_V5 5
 #define SETTINGS_KEY_V4 4
 #define SETTINGS_KEY_V3 3
@@ -63,6 +67,25 @@ typedef struct SettingsV2 {
 Settings g_settings;
 
 void default_settings() {
+#ifdef SHOT_CONFIG
+  // A screenshot build draws the settings scripts/shots.py pinned, so a shot
+  // comes out the same whatever the emulator was last left configured as --
+  // and there is nothing saved to read, since prv_load_settings skips the
+  // persisted copy entirely.
+  g_settings.top_stripe_color = GColorFromHEX(SHOT_TOP_STRIPE_COLOR);
+  g_settings.bottom_stripe_color = GColorFromHEX(SHOT_BOTTOM_STRIPE_COLOR);
+  g_settings.background_color = GColorFromHEX(SHOT_BACKGROUND_COLOR);
+  g_settings.fill_corners = SHOT_FILL_CORNERS;
+  g_settings.hour_color = GColorFromHEX(SHOT_HOUR_COLOR);
+  g_settings.minute_color = GColorFromHEX(SHOT_MINUTE_COLOR);
+  g_settings.time_format = SHOT_TIME_FORMAT;
+  g_settings.wday_color = GColorFromHEX(SHOT_TOP_TEXT_COLOR);
+  g_settings.mday_color = GColorFromHEX(SHOT_BOTTOM_TEXT_COLOR);
+  g_settings.bw_stripe_style = SHOT_BW_STRIPE_STYLE;
+  g_settings.top_complication = SHOT_TOP_COMPLICATION;
+  g_settings.bottom_complication = SHOT_BOTTOM_COMPLICATION;
+  g_settings.temperature_unit = SHOT_TEMPERATURE_UNIT;
+#else
   g_settings.top_stripe_color = GColorJazzberryJam;
   g_settings.bottom_stripe_color = GColorVeryLightBlue;
   g_settings.background_color = GColorBlack;
@@ -76,6 +99,7 @@ void default_settings() {
   g_settings.top_complication = COMPLICATION_WEATHER;
   g_settings.bottom_complication = COMPLICATION_DATE;
   g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
+#endif
 }
 
 static bool prv_draws_icons(Complication complication) {
@@ -95,6 +119,14 @@ bool settings_want_icons() {
 }
 
 bool update_settings(DictionaryIterator *iterator, void *context) {
+#ifdef SHOT_CONFIG
+  // Nothing the phone says can move a pinned shot. Clay only pushes when the
+  // config page is saved, but a shot should not depend on nobody having opened
+  // it.
+  (void)iterator;
+  (void)context;
+  return false;
+#else
   bool dirty = false;
 
   Tuple *top_stripe_color_tuple =
@@ -195,6 +227,7 @@ bool update_settings(DictionaryIterator *iterator, void *context) {
   }
 
   return dirty;
+#endif
 }
 
 static void prv_from_v4_settings(SettingsV4 v4) {

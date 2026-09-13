@@ -3,3 +3,5 @@
 /.lock*
 /fonts/Icons.generated.svg
 /fonts/icons-preview.png
+/src/c/shot_config.h
+__pycache__/

@@ -1,6 +1,15 @@
 #include "health.h"
 
+#ifdef SHOT_CONFIG
+#include "shot_config.h"
+#endif
+
+// A screenshot build reads the numbers scripts/shots.py pinned rather than the
+// watch's own -- an emulator has no step history and no pulse -- but only where
+// the watch has a HealthService at all, so aplite still draws the dashes a
+// Pebble Classic really would.
 #if defined(PBL_HEALTH)
+#if !defined(SHOT_CONFIG)
 static bool prv_accessible(HealthMetric metric) {
   time_t now = time(NULL);
 
@@ -9,23 +18,44 @@ static bool prv_accessible(HealthMetric metric) {
 }
 #endif
 
+static int prv_steps_today() {
+#ifdef SHOT_CONFIG
+  return SHOT_STEPS;
+#else
+  return health_service_sum_today(HealthMetricStepCount);
+#endif
+}
+
+static int prv_heart_rate() {
+#ifdef SHOT_CONFIG
+  return SHOT_HEART;
+#else
+  return health_service_peek_current_value(HealthMetricHeartRateBPM);
+#endif
+}
+#endif
+
 bool health_steps_available() {
-#if defined(PBL_HEALTH)
+#if !defined(PBL_HEALTH)
+  return false;
+#elif defined(SHOT_CONFIG)
+  return SHOT_STEPS >= 0;
+#else
   time_t now = time(NULL);
 
   return health_service_metric_accessible(HealthMetricStepCount,
                                           time_start_of_today(), now) &
          HealthServiceAccessibilityMaskAvailable;
-#else
-  return false;
 #endif
 }
 
 bool health_heart_rate_available() {
-#if defined(PBL_HEALTH)
-  return prv_accessible(HealthMetricHeartRateBPM);
-#else
+#if !defined(PBL_HEALTH)
   return false;
+#elif defined(SHOT_CONFIG)
+  return SHOT_HEART > 0;
+#else
+  return prv_accessible(HealthMetricHeartRateBPM);
 #endif
 }
 
@@ -36,7 +66,7 @@ void health_steps_string(char *buffer, size_t size) {
     return;
   }
 
-  int steps = health_service_sum_today(HealthMetricStepCount);
+  int steps = prv_steps_today();
   // Four digits will not fit the column, so anything in the thousands is set
   // in them: 8.2K up to ten thousand, then 12K, never more than four glyphs.
   if (steps < 1000) {
@@ -56,7 +86,7 @@ void health_heart_rate_string(char *buffer, size_t size) {
   // Whatever the watch last sampled of its own accord. The face deliberately
   // does not raise the sampling rate: that is the wearer's battery, and a
   // number on a watchface is not worth spending it on.
-  int bpm = health_service_peek_current_value(HealthMetricHeartRateBPM);
+  int bpm = prv_heart_rate();
   // The metric can read as accessible while the monitor has yet to produce a
   // sample, and zero is not a heart rate anybody wants to be shown.
   if (!health_heart_rate_available() || bpm <= 0) {

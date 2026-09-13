@@ -3,6 +3,10 @@
 #include "settings.h"
 #include "icons.h"
 
+#ifdef SHOT_CONFIG
+#include "shot_config.h"
+#endif
+
 #define WEATHER_KEY 100
 
 // How long a reading stays good for, and how long to wait before asking again
@@ -22,7 +26,9 @@ typedef struct Weather {
 } Weather;
 
 static Weather s_weather;
+#ifndef SHOT_CONFIG
 static time_t s_requested_at;
+#endif
 
 static const char *s_icons[] = {
     [WEATHER_CLEAR_DAY] = ICON_DAY_SUNNY,
@@ -38,8 +44,19 @@ static const char *s_icons[] = {
 };
 
 void weather_init() {
+#ifdef SHOT_CONFIG
+  // The reading scripts/shots.py pinned, dated now so it is never stale for
+  // the life of the shot. SHOT_WEATHER_HAVE is what a face that has heard
+  // nothing from the phone yet looks like: dashes, and the no-data icon.
+  s_weather = (Weather){
+      .temperature_dc = SHOT_WEATHER_DC,
+      .condition = SHOT_WEATHER_COND,
+      .updated_at = SHOT_WEATHER_HAVE ? time(NULL) : 0,
+  };
+#else
   s_weather = (Weather){.condition = WEATHER_UNKNOWN};
   persist_read_data(WEATHER_KEY, &s_weather, sizeof(s_weather));
+#endif
 }
 
 static bool prv_have_reading() {
@@ -48,6 +65,12 @@ static bool prv_have_reading() {
 }
 
 bool weather_update(DictionaryIterator *iterator) {
+#ifdef SHOT_CONFIG
+  // The phone reports on its own when the watchface launches, whether or not
+  // the watch asked; a shot ignores it and keeps the reading it was given.
+  (void)iterator;
+  return false;
+#else
   Tuple *condition_tuple = dict_find(iterator, MESSAGE_KEY_WEATHER_CONDITION);
   Tuple *temperature_tuple =
       dict_find(iterator, MESSAGE_KEY_WEATHER_TEMPERATURE);
@@ -66,9 +89,13 @@ bool weather_update(DictionaryIterator *iterator) {
   persist_write_data(WEATHER_KEY, &s_weather, sizeof(s_weather));
 
   return true;
+#endif
 }
 
 void weather_refresh() {
+#ifdef SHOT_CONFIG
+  return;
+#else
   DictionaryIterator *out;
   if (app_message_outbox_begin(&out) != APP_MSG_OK) {
     return;
@@ -77,9 +104,13 @@ void weather_refresh() {
   if (app_message_outbox_send() == APP_MSG_OK) {
     s_requested_at = time(NULL);
   }
+#endif
 }
 
 void weather_refresh_if_due() {
+#ifdef SHOT_CONFIG
+  return;
+#else
   time_t now = time(NULL);
   time_t age = now - s_weather.updated_at;
   if (s_weather.updated_at != 0 && age < WEATHER_REFRESH_SECONDS) {
@@ -90,6 +121,7 @@ void weather_refresh_if_due() {
     return;
   }
   weather_refresh();
+#endif
 }
 
 const char *weather_icon() {
