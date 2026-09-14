@@ -217,14 +217,18 @@ module.exports = [
 				"defaultValue": "Animation"
 			},
 			{
-				"type": "text",
-				"defaultValue": "The two halves slide in when the watchface opens. Takes effect the next time it does."
-			},
-			{
 				"type": "toggle",
 				"messageKey": "INTRO_ANIMATION",
 				"label": "Slide in on launch",
-				"defaultValue": true
+				"defaultValue": true,
+				"description": "The two halves slide in when the watchface opens. Takes effect the next time it does."
+			},
+			{
+				"type": "toggle",
+				"messageKey": "TICK_ANIMATION",
+				"label": "Slide on time change",
+				"defaultValue": false,
+				"description": "Animate every time change, old minute/hour slides off and the new one in."
 			}
 		]
 	},

@@ -6,8 +6,11 @@
 // The one key the settings have ever been saved under. There is no migration
 // because there has never been anything to migrate from: the watchface has a
 // UUID of its own, and a watch sandboxes an app's persistent storage by UUID,
-// so the store starts empty everywhere. Changing the struct after the first
-// release does need one -- save under a new key and read the old one once.
+// so the store starts empty everywhere. A field appended to the end of the
+// struct needs none either: the load reads back only the bytes that were
+// stored, leaving a newer field at the default it was given. Anything else --
+// reordering, resizing, inserting -- does, and means saving under a new key and
+// reading the old one once.
 #define SETTINGS_KEY 1
 
 typedef enum {
@@ -55,6 +58,7 @@ typedef struct Settings {
   Complication bottom_complication;
   TemperatureUnit temperature_unit;
   bool intro_animation;
+  bool tick_animation;
 } Settings;
 
 extern Settings g_settings;

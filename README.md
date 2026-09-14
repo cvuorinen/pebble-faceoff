@@ -10,7 +10,7 @@ Changes I have made:
 * Switch "complications" to the other side.
 * Add more complication options, including weather, step count and heart rate.
 * Add support for black & white models.
-* Add "intro animation" that slides in the values at startup.
+* Add "intro animation" that slides in the values at startup, and an optional slide on every time change.
 
 ## Build
 

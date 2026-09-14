@@ -28,9 +28,11 @@ void default_settings() {
   g_settings.top_complication = SHOT_TOP_COMPLICATION;
   g_settings.bottom_complication = SHOT_BOTTOM_COMPLICATION;
   g_settings.temperature_unit = SHOT_TEMPERATURE_UNIT;
-  // A shot never plays the intro anyway -- prv_play_intro is a no-op in a
-  // screenshot build -- but the field is not left to whatever was on the stack.
+  // A shot never plays an animation anyway -- both play functions are no-ops
+  // in a screenshot build -- but the fields are not left to whatever was on the
+  // stack.
   g_settings.intro_animation = false;
+  g_settings.tick_animation = false;
 #else
   g_settings.top_stripe_color = GColorJazzberryJam;
   g_settings.bottom_stripe_color = GColorVeryLightBlue;
@@ -46,6 +48,7 @@ void default_settings() {
   g_settings.bottom_complication = COMPLICATION_DATE;
   g_settings.temperature_unit = TEMPERATURE_UNIT_CELSIUS;
   g_settings.intro_animation = true;
+  g_settings.tick_animation = false;
 #endif
 }
 
@@ -156,6 +159,12 @@ bool update_settings(DictionaryIterator *iterator, void *context) {
       dict_find(iterator, MESSAGE_KEY_INTRO_ANIMATION);
   if (intro_animation_tuple) {
     g_settings.intro_animation = intro_animation_tuple->value->int32 == 1;
+    dirty = true;
+  }
+
+  Tuple *tick_animation_tuple = dict_find(iterator, MESSAGE_KEY_TICK_ANIMATION);
+  if (tick_animation_tuple) {
+    g_settings.tick_animation = tick_animation_tuple->value->int32 == 1;
     dirty = true;
   }
 

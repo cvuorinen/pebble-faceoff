@@ -19,30 +19,53 @@
 // time -- the complication's rows from the screen edge inwards, then the two
 // digits behind them in quick succession -- and once it has landed the bottom
 // half comes in the same way from the right.
-#define INTRO_ROW_STAGGER_MS 110
-#define INTRO_DIGIT_STAGGER_MS 70
+//
+// The same beats turn the face over when the time moves on: the reading being
+// left behind flies out the way its half was already travelling, and once it is
+// gone the new one flies in from where the intro brings it.
+#define ANIM_ROW_STAGGER_MS 110
+#define ANIM_DIGIT_STAGGER_MS 70
 // How long one element takes to fly in. Longer than the gap between beats, so
 // the elements of a half overlap in the air rather than queueing.
-#define INTRO_TRAVEL_MS 300
+#define ANIM_TRAVEL_MS 300
 // The pause between the top half landing and the bottom half setting off: the
 // beat that makes it two entrances rather than one gesture. Negative overlaps
 // them instead.
-#define INTRO_HALF_HOLD_MS (-150)
+#define ANIM_HALF_HOLD_MS (-150)
+// The pause between the outgoing reading having left and the incoming one
+// setting off. Never negative: both passes are the same elements carrying
+// different readings, so they must not be on screen together.
+#define ANIM_CHANGE_HOLD_MS 80
 // The unit an eased beat is measured in. A power of two, since the easing
 // squares and cubes it.
-#define INTRO_SCALE 1024
+#define ANIM_SCALE 1024
 // strftime gives %H, %I and %M two characters whatever the hour.
 #define TIME_DIGIT_COUNT 2
+
+// Whether an animation is the face arriving or the face turning over. A change
+// has an outgoing reading to clear away first; an intro finds the screen empty.
+typedef enum {
+  ANIM_KIND_INTRO,
+  ANIM_KIND_CHANGE,
+} AnimKind;
 
 static Window *s_window;
 static FFont *s_font;
 static FFont *s_icon_font;
 static Layer *s_time_layer;
 static Layer *s_background_layer;
-static Animation *s_intro_animation;
-static AnimationProgress s_intro_progress;
-static uint32_t s_intro_duration_ms;
-static bool s_intro_running;
+static Animation *s_animation;
+static AnimationProgress s_anim_progress;
+static uint32_t s_anim_duration_ms;
+static bool s_anim_running;
+static AnimKind s_anim_kind;
+// Which halves the running animation moves. An intro brings the whole face in;
+// a minute turns over the bottom half alone, the hour being where it was.
+static bool s_anim_top;
+static bool s_anim_bottom;
+// What the face was showing before a change animation set off, drawn until the
+// last of it has left the screen.
+static tm s_outgoing_time;
 
 static const char *s_wdays[] = {"SUN", "MON", "TUE", "WED",
                                 "THU", "FRI", "SAT"};
@@ -215,98 +238,141 @@ static int prv_complication_entry_count(Complication complication) {
   return 0;
 }
 
-// When a beat starts, in milliseconds from the top of the intro. The
+static bool prv_anim_moves_half(bool top) {
+  return top ? s_anim_top : s_anim_bottom;
+}
+
+static int prv_anim_half_rows(bool top) {
+  return prv_complication_entry_count(top ? g_settings.top_complication
+                                          : g_settings.bottom_complication);
+}
+
+// When a beat starts, in milliseconds from the top of its own pass. The
 // complication's rows come first at their own pace, the digits behind them at
 // a quicker one.
-static uint32_t prv_intro_beat_start_ms(int rows, int beat) {
+static uint32_t prv_anim_beat_start_ms(int rows, int beat) {
   if (beat < rows) {
-    return beat * INTRO_ROW_STAGGER_MS;
+    return beat * ANIM_ROW_STAGGER_MS;
   }
 
-  return rows * INTRO_ROW_STAGGER_MS +
-         (beat - rows) * INTRO_DIGIT_STAGGER_MS;
+  return rows * ANIM_ROW_STAGGER_MS + (beat - rows) * ANIM_DIGIT_STAGGER_MS;
 }
 
 // How long a half takes from its own first beat to its last one landing.
-static uint32_t prv_intro_half_length_ms(int rows) {
-  return prv_intro_beat_start_ms(rows, rows + TIME_DIGIT_COUNT - 1) +
-         INTRO_TRAVEL_MS;
+static uint32_t prv_anim_half_length_ms(int rows) {
+  return prv_anim_beat_start_ms(rows, rows + TIME_DIGIT_COUNT - 1) +
+         ANIM_TRAVEL_MS;
 }
 
 // When a half sets off. The top goes first; the bottom waits for it to land,
 // which is what makes the two read as fighter and challenger rather than as
-// one face sliding apart.
-static uint32_t prv_intro_half_start_ms(bool top) {
-  if (top) {
+// one face sliding apart. A half with nothing to wait for does not wait, which
+// is how a minute change -- the bottom on its own -- starts straight away.
+static uint32_t prv_anim_half_start_ms(bool top) {
+  if (top || !prv_anim_moves_half(true)) {
     return 0;
   }
 
-  int32_t start = (int32_t)prv_intro_half_length_ms(prv_complication_entry_count(
-                      g_settings.top_complication)) +
-                  INTRO_HALF_HOLD_MS;
+  int32_t start = (int32_t)prv_anim_half_length_ms(prv_anim_half_rows(true)) +
+                  ANIM_HALF_HOLD_MS;
 
   return start < 0 ? 0 : (uint32_t)start;
 }
 
-#ifndef SHOT_CONFIG
-// How long the whole intro runs: until the later of the two halves has landed.
-// The bottom is normally that, but a hold short enough to overlap the halves
-// can leave a long top column still arriving after a bare bottom one has
-// finished.
-static uint32_t prv_intro_duration_ms() {
-  uint32_t top_end = prv_intro_half_length_ms(
-      prv_complication_entry_count(g_settings.top_complication));
-  uint32_t bottom_end =
-      prv_intro_half_start_ms(false) +
-      prv_intro_half_length_ms(
-          prv_complication_entry_count(g_settings.bottom_complication));
+// How long one pass runs: until the later of the two halves has landed. The
+// bottom is normally that, but a hold short enough to overlap the halves can
+// leave a long top column still arriving after a bare bottom one has finished.
+static uint32_t prv_anim_pass_length_ms() {
+  uint32_t length = 0;
 
-  return bottom_end > top_end ? bottom_end : top_end;
+  for (int half = 0; half < 2; half++) {
+    bool top = half == 0;
+    if (!prv_anim_moves_half(top)) {
+      continue;
+    }
+
+    uint32_t end = prv_anim_half_start_ms(top) +
+                   prv_anim_half_length_ms(prv_anim_half_rows(top));
+    if (end > length) {
+      length = end;
+    }
+  }
+
+  return length;
+}
+
+// When the incoming face sets off: after the outgoing one has been cleared
+// away, or at once when there was nothing to clear.
+static uint32_t prv_anim_entry_start_ms() {
+  return s_anim_kind == ANIM_KIND_CHANGE
+             ? prv_anim_pass_length_ms() + ANIM_CHANGE_HOLD_MS
+             : 0;
+}
+
+#ifndef SHOT_CONFIG
+static uint32_t prv_anim_duration_ms() {
+  return prv_anim_entry_start_ms() + prv_anim_pass_length_ms();
 }
 #endif
 
-// How far along its own slide a beat is: 0 before it starts, INTRO_SCALE once
-// it has landed. Eased so an element decelerates into place rather than
-// stopping dead against it.
-static int32_t prv_intro_beat_progress(bool top, int rows, int beat) {
-  if (!s_intro_running) {
-    return INTRO_SCALE;
-  }
+// Where the running animation has got to, from its own top. Safe in 32 bits for
+// anything under about half a minute, which is a good deal longer than an
+// animation worth watching.
+static int32_t prv_anim_elapsed_ms() {
+  return (int32_t)s_anim_progress * (int32_t)s_anim_duration_ms /
+         ANIMATION_NORMALIZED_MAX;
+}
 
-  // Safe in 32 bits for any intro under about half a minute, which is a good
-  // deal longer than one worth watching.
-  int32_t elapsed_ms = (int32_t)s_intro_progress * (int32_t)s_intro_duration_ms /
-                           ANIMATION_NORMALIZED_MAX -
-                       (int32_t)prv_intro_half_start_ms(top) -
-                       (int32_t)prv_intro_beat_start_ms(rows, beat);
+// How far along a travel that set off at start_ms an element is: 0 before it
+// starts, ANIM_SCALE once it has arrived. Eased so an element decelerates into
+// place rather than stopping dead against it.
+static int32_t prv_anim_travel_progress(int32_t elapsed_ms, int32_t start_ms) {
+  int32_t travelled_ms = elapsed_ms - start_ms;
 
-  if (elapsed_ms <= 0) {
+  if (travelled_ms <= 0) {
     return 0;
   }
-  if (elapsed_ms >= INTRO_TRAVEL_MS) {
-    return INTRO_SCALE;
+  if (travelled_ms >= ANIM_TRAVEL_MS) {
+    return ANIM_SCALE;
   }
 
   // Cubic ease out: away quickly, settling in slowly.
-  int32_t left = INTRO_SCALE - elapsed_ms * INTRO_SCALE / INTRO_TRAVEL_MS;
-  return INTRO_SCALE - left * left / INTRO_SCALE * left / INTRO_SCALE;
+  int32_t left = ANIM_SCALE - travelled_ms * ANIM_SCALE / ANIM_TRAVEL_MS;
+  return ANIM_SCALE - left * left / ANIM_SCALE * left / ANIM_SCALE;
 }
 
-// How far out along the slant a beat still has to travel, as an offset to add
-// to wherever the element finally sits. A whole screen width, so an element
-// starts clear of the edge whatever its own width.
+// How far out along the slant an element still is, as an offset to add to
+// wherever it finally sits. A whole screen width, so it is clear of the edge
+// whatever its own width.
 //
-// The sign is what makes the two halves mirror each other: negative up top,
-// which is out to the left, and positive below, which is out to the right.
-static int32_t prv_f_intro_offset(GRect bounds, bool top, int rows, int beat) {
-  int32_t progress = prv_intro_beat_progress(top, rows, beat);
-  if (progress >= INTRO_SCALE) {
+// The sign is what makes the two halves mirror each other: an arrival comes in
+// from the left up top and from the right below. A departure carries on the way
+// its half was already travelling rather than backing out of the way it came,
+// so a change reads as a reel turning over rather than as a face that thought
+// better of itself. Between the two passes an element waits a screen away on
+// the far side, which is where the jump from one sign to the other hides.
+static int32_t prv_f_anim_offset(GRect bounds, bool top, int rows, int beat) {
+  if (!s_anim_running || !prv_anim_moves_half(top)) {
     return 0;
   }
 
-  int32_t f_out = INT_TO_FIXED(bounds.size.w) * (INTRO_SCALE - progress) /
-                  INTRO_SCALE;
-  return top ? -f_out : f_out;
+  int32_t f_width = INT_TO_FIXED(bounds.size.w);
+  int32_t f_arrives_from = top ? -f_width : f_width;
+  int32_t elapsed_ms = prv_anim_elapsed_ms();
+  int32_t beat_ms = (int32_t)prv_anim_half_start_ms(top) +
+                    (int32_t)prv_anim_beat_start_ms(rows, beat);
+
+  if (s_anim_kind == ANIM_KIND_CHANGE) {
+    int32_t leaving = prv_anim_travel_progress(elapsed_ms, beat_ms);
+    if (leaving < ANIM_SCALE) {
+      return -f_arrives_from * leaving / ANIM_SCALE;
+    }
+  }
+
+  int32_t arriving = prv_anim_travel_progress(
+      elapsed_ms, (int32_t)prv_anim_entry_start_ms() + beat_ms);
+
+  return f_arrives_from * (ANIM_SCALE - arriving) / ANIM_SCALE;
 }
 
 static void prv_f_draw_text(FContext *fctx, FPoint f_center, const char *text,
@@ -344,9 +410,9 @@ static void prv_draw_time_digits(FContext *fctx, GRect bounds,
   for (int digit = 0; digit < count; digit++) {
     char glyph[2] = {digits[digit], '\0'};
     int beat = rows + (top ? count - 1 - digit : digit);
-    int32_t f_intro = prv_f_intro_offset(bounds, top, rows, beat);
+    int32_t f_anim = prv_f_anim_offset(bounds, top, rows, beat);
 
-    prv_f_draw_text(fctx, prv_f_slide(f_center, f_pen + f_intro), glyph, s_font,
+    prv_f_draw_text(fctx, prv_f_slide(f_center, f_pen + f_anim), glyph, s_font,
                     color, GTextAlignmentLeft);
     f_pen += fctx_string_width(fctx, glyph, s_font);
   }
@@ -405,12 +471,12 @@ static int32_t prv_f_side_column_offset(FContext *fctx, GRect bounds) {
 // "-22°" would otherwise run off the edge.
 static FPoint prv_f_complication_point(GRect bounds, int32_t f_offset, bool top,
                                        int line, int32_t f_line_height,
-                                       int32_t f_extra, int32_t f_intro) {
+                                       int32_t f_extra, int32_t f_anim) {
   int32_t f_radius =
       prv_f_date_font_radius(bounds) + line * f_line_height + f_extra;
 
   return prv_f_slant_point(bounds, top ? f_radius : -f_radius,
-                           (top ? f_offset : -f_offset) + f_intro);
+                           (top ? f_offset : -f_offset) + f_anim);
 }
 
 // Three lines will not fit the corner at the size one or two do -- the outer
@@ -512,7 +578,7 @@ static void prv_draw_complication(Layer *layer, GContext *ctx, tm *time,
     FPoint f_point = prv_f_complication_point(
         bounds, f_offset, top, line, f_line_height,
         is_icon ? prv_f_icon_gap(bounds) : 0,
-        prv_f_intro_offset(bounds, top, rows, rows - 1 - line));
+        prv_f_anim_offset(bounds, top, rows, rows - 1 - line));
     if (!is_icon) {
       prv_f_draw_text(&fctx, f_point, lines[line], s_font, color, alignment);
     } else {
@@ -619,18 +685,101 @@ static void prv_draw_background_layer(Layer *layer, GContext *ctx) {
   prv_draw_background_stripe(layer, ctx, prv_stripe_color(false), true);
 }
 
+// A change animation draws the reading the face is leaving behind until the
+// last of it is off the screen. A half that is not moving carries a reading
+// that has not changed anyway.
+static tm *prv_drawn_time() {
+  if (s_anim_running && s_anim_kind == ANIM_KIND_CHANGE &&
+      prv_anim_elapsed_ms() < (int32_t)prv_anim_entry_start_ms()) {
+    return &s_outgoing_time;
+  }
+
+  return prv_now();
+}
+
 static void prv_draw_time_layer(Layer *layer, GContext *ctx) {
-  tm *time = prv_now();
+  tm *time = prv_drawn_time();
 
   prv_draw_time(layer, ctx, time);
   prv_draw_complication(layer, ctx, time, true);
   prv_draw_complication(layer, ctx, time, false);
 }
 
-static void prv_tick_handler(tm *_tick_time, TimeUnits _units_changed) {
+#ifdef SHOT_CONFIG
+// A screenshot should not have to race a timer to catch the settled face, so a
+// shot build never starts one: s_anim_running stays false, every beat reads as
+// landed, and the face draws where it comes to rest.
+static void prv_play_intro() {}
+static void prv_play_time_change(tm *tick_time) { (void)tick_time; }
+#else
+static void prv_anim_update(Animation *animation,
+                            const AnimationProgress progress) {
+  s_anim_progress = progress;
+  // Only the text moves; the stripes underneath it are already where they
+  // belong.
+  layer_mark_dirty(s_time_layer);
+}
+
+static void prv_anim_stopped(Animation *animation, bool finished,
+                             void *context) {
+  s_anim_running = false;
+  // The animation destroys itself from here, so nothing outside may hold on
+  // to it past this point.
+  s_animation = NULL;
+  layer_mark_dirty(s_time_layer);
+}
+
+static const AnimationImplementation s_anim_implementation = {
+    .update = prv_anim_update,
+};
+
+static void prv_play(AnimKind kind, bool top, bool bottom) {
+  s_anim_kind = kind;
+  s_anim_top = top;
+  s_anim_bottom = bottom;
+  s_anim_duration_ms = prv_anim_duration_ms();
+  s_anim_progress = 0;
+  s_anim_running = true;
+
+  s_animation = animation_create();
+  animation_set_implementation(s_animation, &s_anim_implementation);
+  animation_set_duration(s_animation, s_anim_duration_ms);
+  // Each beat eases itself; easing the whole run as well would bunch them up.
+  animation_set_curve(s_animation, AnimationCurveLinear);
+  animation_set_handlers(
+      s_animation, (AnimationHandlers){.stopped = prv_anim_stopped}, NULL);
+  animation_schedule(s_animation);
+}
+
+static void prv_play_intro() {
+  if (!g_settings.intro_animation) {
+    return;
+  }
+
+  prv_play(ANIM_KIND_INTRO, true, true);
+}
+
+// The bottom half turns over every minute, that being the half the minute is
+// in; on the hour the top goes with it. A face that is still arriving is left
+// to arrive.
+static void prv_play_time_change(tm *tick_time) {
+  if (!g_settings.tick_animation || s_anim_running) {
+    return;
+  }
+
+  time_t outgoing = time(NULL) - SECONDS_PER_MINUTE;
+  s_outgoing_time = *localtime(&outgoing);
+
+  prv_play(ANIM_KIND_CHANGE, tick_time->tm_min == 0, true);
+}
+#endif
+
+static void prv_tick_handler(tm *tick_time, TimeUnits _units_changed) {
   if (settings_want_weather()) {
     weather_refresh_if_due();
   }
+
+  prv_play_time_change(tick_time);
   layer_mark_dirty(s_time_layer);
 }
 
@@ -640,54 +789,6 @@ static void prv_invalidate_layers() {
   layer_mark_dirty(s_background_layer);
 }
 
-#ifdef SHOT_CONFIG
-// A screenshot should not have to race a timer to catch the settled face, so a
-// shot build never starts one: s_intro_running stays false, every beat reads as
-// landed, and the face draws where it comes to rest.
-static void prv_play_intro() {}
-#else
-static void prv_intro_update(Animation *animation,
-                             const AnimationProgress progress) {
-  s_intro_progress = progress;
-  // Only the text moves; the stripes underneath it are already where they
-  // belong.
-  layer_mark_dirty(s_time_layer);
-}
-
-static void prv_intro_stopped(Animation *animation, bool finished,
-                              void *context) {
-  s_intro_running = false;
-  // The animation destroys itself from here, so nothing outside may hold on
-  // to it past this point.
-  s_intro_animation = NULL;
-  layer_mark_dirty(s_time_layer);
-}
-
-static const AnimationImplementation s_intro_implementation = {
-    .update = prv_intro_update,
-};
-
-static void prv_play_intro() {
-  if (!g_settings.intro_animation) {
-    return;
-  }
-
-  s_intro_duration_ms = prv_intro_duration_ms();
-  s_intro_progress = 0;
-  s_intro_running = true;
-
-  s_intro_animation = animation_create();
-  animation_set_implementation(s_intro_animation, &s_intro_implementation);
-  animation_set_duration(s_intro_animation, s_intro_duration_ms);
-  // Each beat eases itself; easing the whole run as well would bunch them up.
-  animation_set_curve(s_intro_animation, AnimationCurveLinear);
-  animation_set_handlers(
-      s_intro_animation, (AnimationHandlers){.stopped = prv_intro_stopped},
-      NULL);
-  animation_schedule(s_intro_animation);
-}
-#endif
-
 static void prv_window_load(Window *window) {
   layer_set_update_proc(s_time_layer, prv_draw_time_layer);
   layer_set_update_proc(s_background_layer, prv_draw_background_layer);
@@ -695,8 +796,8 @@ static void prv_window_load(Window *window) {
 }
 
 static void prv_window_unload(Window *window) {
-  if (s_intro_animation) {
-    animation_unschedule(s_intro_animation);
+  if (s_animation) {
+    animation_unschedule(s_animation);
   }
   layer_destroy(s_time_layer);
   layer_destroy(s_background_layer);

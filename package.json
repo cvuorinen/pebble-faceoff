@@ -44,7 +44,8 @@
       "WEATHER_REQUEST",
       "WEATHER_TEMPERATURE",
       "WEATHER_CONDITION",
-      "INTRO_ANIMATION"
+      "INTRO_ANIMATION",
+      "TICK_ANIMATION"
     ],
     "resources": {
       "media": [
